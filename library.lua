@@ -1,5 +1,5 @@
--- REASON: Dumbass customer put their library in a request and flexed his non existant security and ended up getting it leaked by himself... 😭
--- The code here is horrendous this is my 2nd library, the added on code was made to suit the old code however I should have just converted to a newer version of my code kind of an oopsie. 
+
+
 -- CHANGELOG:
 -- Structural UI refactor: flattened shared control surfaces, added one-shot theme binding helpers, removed the legacy colorpicker path,
 -- and simplified section/dropdown/hover rendering so the library keeps the same APIs while looking less boxed and layered.
@@ -72,7 +72,7 @@
 
 -- library init
 	local library = {
-		directory = "Leetchy",
+		directory = "Atlanta",
 		version = "glassmorphism_v2_integrated", -- MODERNIZED VERSION WITH INTEGRATED TABS
 		folders = {
 			"/fonts",
@@ -3355,7 +3355,7 @@
 
 			-- main window
 				local main_window = library:panel({
-					name = properties and properties.name or "Leetchy | ",
+					name = properties and properties.name or "Atlanta | ",
 					size = properties and properties.size or dim2(0, 740, 0, 620),
 					position = properties and properties.position or nil,
 					image = "rbxassetid://98823308062942",
@@ -3371,11 +3371,11 @@
 				window.visuals_tab = nil
 				window._esp_preview_section = nil
 
-				local watermark = library:watermark({default = os.date('Leetchy | %b %d %Y | %H:%M:%S')})
+				local watermark = library:watermark({default = os.date('Atlanta | %b %d %Y | %H:%M:%S')})
 
 				task.spawn(function()
 					while task.wait(1) do
-						watermark.change_text(os.date('Leetchy | %b %d %Y | %H:%M:%S'))
+						watermark.change_text(os.date('Atlanta | %b %d %Y | %H:%M:%S'))
 					end
 				end)
 
@@ -4122,9 +4122,14 @@
 				width = properties.width or 336,
 				icon_text = tostring(properties.icon_text or "!"),
 			}
+
+			if self.notifications_disabled then
+				warn("[ui] " .. cfg.title .. ": " .. cfg.text)
+				return
+			end
 		
 			-- Instances
-				local card, card_stroke, card_fill = create_field_surface(notif_holder, {
+				local card_ok, card, card_stroke, card_fill = pcall(create_field_surface, notif_holder, {
 					name = "notification",
 					size = dim2(0, cfg.width, 0, 76),
 					position = dim2(1, cfg.width + 28, 0, 20),
@@ -4146,6 +4151,15 @@
 					outer_radius = 12,
 					fill_radius = 11,
 				})
+				if not card_ok then
+					self.notifications_disabled = true
+					if not self.notification_error_reported then
+						self.notification_error_reported = true
+						warn("[ui] Notifications unavailable in this executor thread: " .. tostring(card))
+					end
+					warn("[ui] " .. cfg.title .. ": " .. cfg.text)
+					return
+				end
 				card.ClipsDescendants = true
 				card_fill.BackgroundTransparency = 1
 				if card_stroke then
