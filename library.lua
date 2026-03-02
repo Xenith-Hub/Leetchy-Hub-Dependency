@@ -1,5 +1,5 @@
-
-
+-- REASON: Dumbass customer put their library in a request and flexed his non existant security and ended up getting it leaked by himself... 😭
+-- The code here is horrendous this is my 2nd library, the added on code was made to suit the old code however I should have just converted to a newer version of my code kind of an oopsie. 
 -- CHANGELOG:
 -- Structural UI refactor: flattened shared control surfaces, added one-shot theme binding helpers, removed the legacy colorpicker path,
 -- and simplified section/dropdown/hover rendering so the library keeps the same APIs while looking less boxed and layered.
@@ -11,6 +11,7 @@
 	local http_service = cloneref(game:GetService("HttpService"))
 	local gui_service = cloneref(game:GetService("GuiService"))
 	local lighting = cloneref(game:GetService("Lighting"))
+	local marketplace_service = cloneref(game:GetService("MarketplaceService"))
 	local run = cloneref(game:GetService("RunService"))
 	local stats = cloneref(game:GetService("Stats"))
 	local coregui = cloneref(game:GetService("CoreGui"))
@@ -72,7 +73,7 @@
 
 -- library init
 	local library = {
-		directory = "Atlanta",
+		directory = "Axon",
 		version = "glassmorphism_v2_integrated", -- MODERNIZED VERSION WITH INTEGRATED TABS
 		folders = {
 			"/fonts",
@@ -111,6 +112,7 @@
 
 	local flags = library.flags
 	local config_flags = library.config_flags
+	local place_name_cache
 
 	local themes = {
 		preset = {
@@ -2120,6 +2122,677 @@
 		end
 	--
 
+		function library:get_place_display_name(refresh)
+			if not place_name_cache or refresh then
+				local ok, info = pcall(marketplace_service.GetProductInfo, marketplace_service, game.PlaceId)
+				place_name_cache = ok and tostring(info and info.Name or "") ~= "" and tostring(info.Name) or "Unknown"
+			end
+
+			return place_name_cache
+		end
+
+		function library:play_window_intro(items, panel_cfg)
+			if not items or not items.main_holder or not items.sgui or items.loader_overlay then
+				return
+			end
+
+			items.main_holder.Visible = false
+
+			local intro_scale = items.main_holder:FindFirstChild("intro_scale") or library:create("UIScale", {
+				Parent = items.main_holder,
+				Name = "intro_scale",
+				Scale = 0.965,
+			})
+			intro_scale.Scale = 0.965
+
+			local overlay_root, _, overlay_shell = create_field_surface(items.sgui, {
+				name = "loader_overlay",
+				anchor_point = items.main_holder.AnchorPoint,
+				position = items.main_holder.Position,
+				size = items.main_holder.Size,
+				zindex = 20,
+				shadow = false,
+				outer_theme = false,
+				shadow_offset = ui_tokens.shadow.window_offset,
+				shadow_transparency = ui_tokens.shadow.window_transparency,
+				fill_theme = "inline",
+				fill_color = themes.preset.inline,
+				fill_transparency = 1,
+				outer_radius = 6,
+				fill_radius = 5,
+				clips_descendants = true,
+			})
+			overlay_root.BackgroundTransparency = 1
+			overlay_shell.BackgroundTransparency = 1
+			items.loader_overlay = overlay_root
+
+			local overlay = library:create("Frame", {
+				Parent = overlay_shell,
+				Name = "loader_overlay_fill",
+				Position = dim2(0, 1, 0, 1),
+				Size = dim2(1, -2, 1, -2),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.content_surface,
+				BackgroundTransparency = 1,
+				ZIndex = 22,
+				ClipsDescendants = true,
+			})
+			library:apply_corner(overlay, 4)
+
+			local overlay_gradient = library:create("UIGradient", {
+				Parent = overlay,
+				Rotation = 135,
+				Color = themes.preset.contrast,
+				Transparency = numseq{
+					numkey(0, 1),
+					numkey(0.5, 1),
+					numkey(1, 1),
+				},
+			})
+			library:apply_theme_once(overlay_gradient, "contrast", "Color")
+
+			local stages = {
+				{percent = 30, status = "Preparing theme and shell", label = "BOOT"},
+				{percent = 60, status = "Building tabs and controls", label = "SYNC"},
+				{percent = 90, status = "Syncing sections and pages", label = "BUILD"},
+				{percent = 100, status = "Opening " .. tostring((panel_cfg and panel_cfg.name) or "interface"), label = "READY"},
+			}
+
+			local overlay_scale = library:create("UIScale", {
+				Parent = overlay_root,
+				Name = "loader_overlay_scale",
+				Scale = 0.97,
+			})
+
+			local accent_glow_left = library:create("Frame", {
+				Parent = overlay,
+				Name = "",
+				AnchorPoint = vec2(0.5, 0.5),
+				Position = dim2(0.22, 0, 0.24, 0),
+				Size = dim2(0, 240, 0, 240),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.accent,
+				BackgroundTransparency = 0.955,
+				ZIndex = 21,
+			})
+			library:apply_theme_once(accent_glow_left, "accent", "BackgroundColor3")
+			library:apply_corner(accent_glow_left, 999)
+
+			local accent_glow_right = library:create("Frame", {
+				Parent = overlay,
+				Name = "",
+				AnchorPoint = vec2(0.5, 0.5),
+				Position = dim2(0.78, 0, 0.74, 0),
+				Size = dim2(0, 300, 0, 300),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.low_contrast,
+				BackgroundTransparency = 0.968,
+				ZIndex = 21,
+			})
+			library:apply_theme_once(accent_glow_right, "low_contrast", "BackgroundColor3")
+			library:apply_corner(accent_glow_right, 999)
+
+			for index = 1, 6 do
+				local vertical_line = library:create("Frame", {
+					Parent = overlay,
+					Name = "",
+					AnchorPoint = vec2(0.5, 0),
+					Position = dim2(index / 7, 0, 0, 0),
+					Size = dim2(0, 1, 1, 0),
+					BorderSizePixel = 0,
+					BackgroundColor3 = themes.preset.separator,
+					BackgroundTransparency = 0.94,
+					ZIndex = 21,
+				})
+				library:apply_theme_once(vertical_line, "separator", "BackgroundColor3")
+			end
+
+			for index = 1, 4 do
+				local horizontal_line = library:create("Frame", {
+					Parent = overlay,
+					Name = "",
+					AnchorPoint = vec2(0, 0.5),
+					Position = dim2(0, 0, index / 5, 0),
+					Size = dim2(1, 0, 0, 1),
+					BorderSizePixel = 0,
+					BackgroundColor3 = themes.preset.separator,
+					BackgroundTransparency = 0.955,
+					ZIndex = 21,
+				})
+				library:apply_theme_once(horizontal_line, "separator", "BackgroundColor3")
+			end
+
+			local hero_shell, hero_stroke, hero_fill = create_field_surface(overlay, {
+				name = "loader_card",
+				anchor_point = vec2(0.5, 0.5),
+				position = dim2(0.5, 0, 0.5, 0),
+				size = dim2(0, 454, 0, 294),
+				zindex = 22,
+				shadow = true,
+				shadow_offset = 14,
+				shadow_transparency = 0.82,
+				fill_theme = "section_surface",
+				fill_color = themes.preset.section_surface,
+				gradient = true,
+				gradient_rotation = 122,
+				gradient_theme = "contrast",
+				gradient_transparency = numseq{
+					numkey(0, 0),
+					numkey(0.46, 0),
+					numkey(1, 0),
+				},
+				outer_radius = 16,
+				fill_radius = 15,
+				clips_descendants = true,
+			})
+			hero_shell.BackgroundTransparency = 1
+
+			local hero_scale = library:create("UIScale", {
+				Parent = hero_shell,
+				Name = "loader_scale",
+				Scale = 0.9,
+			})
+
+			local hero_strip = library:create("Frame", {
+				Parent = hero_fill,
+				Name = "",
+				Position = dim2(0, 26, 0, 18),
+				Size = dim2(0, 54, 0, 3),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.accent,
+				BackgroundTransparency = 0,
+				ZIndex = 24,
+			})
+			library:apply_theme_once(hero_strip, "accent", "BackgroundColor3")
+			library:apply_corner(hero_strip, 999)
+
+			local boot_shell, _, boot_fill = create_field_surface(hero_fill, {
+				name = "boot_badge",
+				position = dim2(0, 24, 0, 26),
+				size = dim2(0, 110, 0, 26),
+				zindex = 24,
+				fill_theme = "control_surface",
+				fill_color = themes.preset.control_surface,
+				fill_transparency = 0,
+				outer_radius = 999,
+				fill_radius = 999,
+				stroke_transparency = 0.54,
+			})
+			boot_shell.BackgroundTransparency = 1
+
+			local boot_dot = library:create("Frame", {
+				Parent = boot_fill,
+				Name = "",
+				AnchorPoint = vec2(0, 0.5),
+				Position = dim2(0, 10, 0.5, 0),
+				Size = dim2(0, 6, 0, 6),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.accent,
+				ZIndex = 26,
+			})
+			library:apply_theme_once(boot_dot, "accent", "BackgroundColor3")
+			library:apply_corner(boot_dot, 999)
+
+			local boot_label = library:create("TextLabel", {
+				Parent = boot_fill,
+				Name = "",
+				BackgroundTransparency = 1,
+				Position = dim2(0, 24, 0, 0),
+				Size = dim2(1, -30, 1, 0),
+				BorderSizePixel = 0,
+				FontFace = library.font,
+				Text = "LOADING",
+				TextSize = 11,
+				TextColor3 = themes.preset.value_text,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				ZIndex = 26,
+			})
+			library:apply_theme_once(boot_label, "value_text", "TextColor3")
+
+			local percent_shell, _, percent_fill = create_field_surface(hero_fill, {
+				name = "percent_badge",
+				anchor_point = vec2(1, 0),
+				position = dim2(1, -24, 0, 26),
+				size = dim2(0, 84, 0, 30),
+				zindex = 24,
+				fill_theme = "control_surface",
+				fill_color = themes.preset.control_surface,
+				fill_transparency = 0,
+				outer_radius = 999,
+				fill_radius = 999,
+				stroke_transparency = 0.48,
+			})
+			percent_shell.BackgroundTransparency = 1
+
+			local percent_label = library:create("TextLabel", {
+				Parent = percent_fill,
+				Name = "",
+				BackgroundTransparency = 1,
+				Size = dim2(1, 0, 1, 0),
+				BorderSizePixel = 0,
+				FontFace = library.font,
+				Text = "0%",
+				TextSize = 16,
+				TextColor3 = themes.preset.text,
+				ZIndex = 26,
+			})
+			library:apply_theme_once(percent_label, "text", "TextColor3")
+
+			local orbit_container = library:create("Frame", {
+				Parent = hero_fill,
+				Name = "orbit_container",
+				AnchorPoint = vec2(0.5, 0),
+				Position = dim2(0.5, 0, 0, 24),
+				Size = dim2(0, 130, 0, 130),
+				BorderSizePixel = 0,
+				BackgroundTransparency = 1,
+				ZIndex = 23,
+			})
+
+			local orbit_ring = library:create("Frame", {
+				Parent = orbit_container,
+				Name = "",
+				AnchorPoint = vec2(0.5, 0.5),
+				Position = dim2(0.5, 0, 0.5, 0),
+				Size = dim2(0, 116, 0, 116),
+				BorderSizePixel = 0,
+				BackgroundTransparency = 1,
+				ZIndex = 23,
+			})
+			library:apply_corner(orbit_ring, 999)
+			local orbit_ring_stroke = library:create("UIStroke", {
+				Parent = orbit_ring,
+				Color = themes.preset.separator,
+				Thickness = 1,
+				Transparency = 0.45,
+			})
+			library:apply_theme_once(orbit_ring_stroke, "separator", "Color")
+
+			local orbit_ring_inner = library:create("Frame", {
+				Parent = orbit_container,
+				Name = "",
+				AnchorPoint = vec2(0.5, 0.5),
+				Position = dim2(0.5, 0, 0.5, 0),
+				Size = dim2(0, 96, 0, 96),
+				BorderSizePixel = 0,
+				BackgroundTransparency = 1,
+				ZIndex = 23,
+			})
+			library:apply_corner(orbit_ring_inner, 999)
+			local orbit_ring_inner_stroke = library:create("UIStroke", {
+				Parent = orbit_ring_inner,
+				Color = themes.preset.accent,
+				Thickness = 1,
+				Transparency = 0.78,
+			})
+			library:apply_theme_once(orbit_ring_inner_stroke, "accent", "Color")
+
+			local orbit_dot = library:create("Frame", {
+				Parent = orbit_container,
+				Name = "",
+				AnchorPoint = vec2(0.5, 0.5),
+				Position = dim2(1, -7, 0.5, 0),
+				Size = dim2(0, 10, 0, 10),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.accent,
+				ZIndex = 24,
+			})
+			library:apply_theme_once(orbit_dot, "accent", "BackgroundColor3")
+			library:apply_corner(orbit_dot, 999)
+
+			local orbit_dot_core = library:create("Frame", {
+				Parent = orbit_dot,
+				Name = "",
+				AnchorPoint = vec2(0.5, 0.5),
+				Position = dim2(0.5, 0, 0.5, 0),
+				Size = dim2(0, 4, 0, 4),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.high_contrast,
+				ZIndex = 25,
+			})
+			library:apply_theme_once(orbit_dot_core, "high_contrast", "BackgroundColor3")
+			library:apply_corner(orbit_dot_core, 999)
+
+			local play_shell, play_stroke, play_fill = create_field_surface(hero_fill, {
+				name = "play_shell",
+				anchor_point = vec2(0.5, 0),
+				position = dim2(0.5, 0, 0, 41),
+				size = dim2(0, 96, 0, 96),
+				zindex = 24,
+				shadow = true,
+				shadow_offset = 12,
+				shadow_transparency = 0.84,
+				fill_theme = "accent",
+				fill_color = themes.preset.accent,
+				fill_transparency = 0,
+				outer_radius = 999,
+				fill_radius = 999,
+				stroke_transparency = 0.2,
+				clips_descendants = true,
+			})
+			play_shell.BackgroundTransparency = 1
+
+			local play_glow = library:apply_glow(play_fill, 24, themes.preset.accent)
+			play_glow.ImageTransparency = 0.8
+			play_glow.ZIndex = 23
+
+			local play_core = library:create("Frame", {
+				Parent = play_fill,
+				Name = "play_core",
+				AnchorPoint = vec2(0.5, 0.5),
+				Position = dim2(0.5, 0, 0.5, 0),
+				Size = dim2(0, 66, 0, 66),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.high_contrast,
+				BackgroundTransparency = 0,
+				ZIndex = 25,
+			})
+			library:apply_theme_once(play_core, "high_contrast", "BackgroundColor3")
+			library:apply_corner(play_core, 999)
+
+			local play_core_stroke = library:create("UIStroke", {
+				Parent = play_core,
+				Color = themes.preset.surface_highlight,
+				Thickness = 1,
+				Transparency = 0.7,
+			})
+			library:apply_theme_once(play_core_stroke, "surface_highlight", "Color")
+
+			local play_icon_asset = library:resolve_tab_icon_asset("play")
+			if play_icon_asset then
+				local play_icon = library:create("ImageLabel", {
+					Parent = play_core,
+					Name = "play_icon",
+					BackgroundTransparency = 1,
+					AnchorPoint = vec2(0.5, 0.5),
+					Position = dim2(0.5, 2, 0.5, 0),
+					Size = dim2(0, 44, 0, 44),
+					BorderSizePixel = 0,
+					Image = play_icon_asset.image,
+					ImageRectSize = play_icon_asset.image_rect_size,
+					ImageRectOffset = play_icon_asset.image_rect_offset,
+					ImageColor3 = themes.preset.accent,
+					ZIndex = 26,
+				})
+				library:apply_theme_once(play_icon, "accent", "ImageColor3")
+			else
+				local play_fallback = library:create("TextLabel", {
+					Parent = play_core,
+					Name = "play_fallback",
+					BackgroundTransparency = 1,
+					Size = dim2(1, 0, 1, 0),
+					BorderSizePixel = 0,
+					FontFace = library.font,
+					Text = ">",
+					TextSize = 36,
+					TextColor3 = themes.preset.accent,
+					ZIndex = 26,
+				})
+				library:apply_theme_once(play_fallback, "accent", "TextColor3")
+			end
+
+			local experience_label = library:create("TextLabel", {
+				Parent = hero_fill,
+				Name = "",
+				BackgroundTransparency = 1,
+				Position = dim2(0, 30, 0, 154),
+				Size = dim2(1, -60, 0, 14),
+				BorderSizePixel = 0,
+				FontFace = library.font,
+				Text = "CURRENT EXPERIENCE",
+				TextSize = 11,
+				TextColor3 = themes.preset.value_text,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				ZIndex = 24,
+			})
+			library:apply_theme_once(experience_label, "value_text", "TextColor3")
+
+			local title = library:create("TextLabel", {
+				Parent = hero_fill,
+				Name = "",
+				BackgroundTransparency = 1,
+				Position = dim2(0, 32, 0, 172),
+				Size = dim2(1, -64, 0, 28),
+				BorderSizePixel = 0,
+				FontFace = library.font,
+				Text = library:get_place_display_name(),
+				TextSize = 22,
+				TextColor3 = themes.preset.text,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				ZIndex = 24,
+			})
+			library:apply_theme_once(title, "text", "TextColor3")
+
+			local subtitle = library:create("TextLabel", {
+				Parent = hero_fill,
+				Name = "",
+				BackgroundTransparency = 1,
+				Position = dim2(0, 36, 0, 201),
+				Size = dim2(1, -72, 0, 18),
+				BorderSizePixel = 0,
+				FontFace = library.font,
+				Text = "Loading " .. tostring((panel_cfg and panel_cfg.name) or "interface"),
+				TextSize = ui_tokens.font.label,
+				TextColor3 = themes.preset.text_secondary,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				ZIndex = 24,
+			})
+			library:apply_theme_once(subtitle, "text_secondary", "TextColor3")
+
+			local status_label = library:create("TextLabel", {
+				Parent = hero_fill,
+				Name = "",
+				BackgroundTransparency = 1,
+				Position = dim2(0, 34, 0, 224),
+				Size = dim2(1, -68, 0, 16),
+				BorderSizePixel = 0,
+				FontFace = library.font,
+				Text = stages[1].status,
+				TextSize = 11,
+				TextColor3 = themes.preset.value_text,
+				TextXAlignment = Enum.TextXAlignment.Center,
+				ZIndex = 24,
+			})
+			library:apply_theme_once(status_label, "value_text", "TextColor3")
+
+			local progress_track = library:create("Frame", {
+				Parent = hero_fill,
+				Name = "",
+				Position = dim2(0, 26, 1, -24),
+				Size = dim2(1, -52, 0, 8),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.control_surface,
+				BackgroundTransparency = 0,
+				ZIndex = 24,
+			})
+			library:apply_theme_once(progress_track, "control_surface", "BackgroundColor3")
+			library:apply_corner(progress_track, 999)
+
+			local progress_fill = library:create("Frame", {
+				Parent = progress_track,
+				Name = "",
+				Size = dim2(0, 0, 1, 0),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.accent,
+				ClipsDescendants = true,
+				ZIndex = 25,
+			})
+			library:apply_theme_once(progress_fill, "accent", "BackgroundColor3")
+			library:apply_corner(progress_fill, 999)
+
+			local progress_gradient = library:create("UIGradient", {
+				Parent = progress_fill,
+				Rotation = 0,
+				Color = rgbseq{
+					rgbkey(0, themes.preset.surface_highlight),
+					rgbkey(0.5, themes.preset.accent),
+					rgbkey(1, themes.preset.high_contrast),
+				},
+			})
+
+			local progress_sheen = library:create("Frame", {
+				Parent = progress_fill,
+				Name = "",
+				Position = dim2(0, -48, 0, -4),
+				Size = dim2(0, 40, 1, 8),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.high_contrast,
+				BackgroundTransparency = 0.72,
+				ZIndex = 26,
+			})
+			library:apply_theme_once(progress_sheen, "high_contrast", "BackgroundColor3")
+			library:apply_corner(progress_sheen, 999)
+
+			local fade_targets = {
+				accent_glow_left,
+				accent_glow_right,
+				hero_fill,
+				hero_strip,
+				boot_fill,
+				percent_fill,
+				play_fill,
+				play_core,
+				progress_track,
+				progress_fill,
+			}
+
+			task.spawn(function()
+				tween_service:Create(
+					overlay_scale,
+					TweenInfo.new(0.44, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+					{Scale = 1}
+				):Play()
+
+				tween_service:Create(
+					hero_scale,
+					TweenInfo.new(0.52, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+					{Scale = 1}
+				):Play()
+
+				local stage_time = 1.25
+				local tween_time = 1.02
+				local displayed_percent = 0
+
+				task.spawn(function()
+					local animation_started = os.clock()
+
+					while overlay_root and overlay_root.Parent do
+						local elapsed = os.clock() - animation_started
+						orbit_container.Rotation = (elapsed * 38) % 360
+						progress_gradient.Offset = vec2(((elapsed * 0.7) % 2) - 1, 0)
+
+						local glow_wave = (sin(elapsed * 2.3) + 1) * 0.5
+						local left_wave = (sin(elapsed * 1.1) + 1) * 0.5
+						local right_wave = (sin(elapsed * 1.25 + 1.4) + 1) * 0.5
+
+						play_glow.ImageTransparency = 0.84 - (glow_wave * 0.08)
+						accent_glow_left.BackgroundTransparency = 0.965 - (left_wave * 0.02)
+						accent_glow_right.BackgroundTransparency = 0.972 - (right_wave * 0.014)
+
+						task.wait()
+					end
+				end)
+
+				local function animate_percent(target_percent)
+					local start_percent = displayed_percent
+					local started = os.clock()
+
+					while overlay_root and overlay_root.Parent do
+						local alpha = clamp((os.clock() - started) / tween_time, 0, 1)
+						local eased = tween_service:GetValue(alpha, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+						local value = floor(start_percent + ((target_percent - start_percent) * eased) + 0.5)
+
+						percent_label.Text = tostring(value) .. "%"
+						if alpha >= 1 then
+							break
+						end
+
+						run.RenderStepped:Wait()
+					end
+
+					displayed_percent = target_percent
+					percent_label.Text = tostring(target_percent) .. "%"
+				end
+
+				for index, stage in ipairs(stages) do
+					if not overlay.Parent then
+						return
+					end
+
+					status_label.Text = stage.status
+
+					tween_service:Create(
+						progress_fill,
+						TweenInfo.new(tween_time, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+						{Size = dim2(stage.percent / 100, 0, 1, 0)}
+					):Play()
+
+					progress_sheen.Position = dim2(0, -48, 0, -4)
+					tween_service:Create(
+						progress_sheen,
+						TweenInfo.new(tween_time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+						{Position = dim2(1, 10, 0, -4)}
+					):Play()
+
+					animate_percent(stage.percent)
+					task.wait(max(stage_time - tween_time, 0))
+				end
+
+				displayed_percent = 100
+				percent_label.Text = "100%"
+				progress_fill.Size = dim2(1, 0, 1, 0)
+				status_label.Text = "Ready"
+				subtitle.Text = tostring((panel_cfg and panel_cfg.name) or "Interface") .. " loaded"
+
+				items.main_holder.Visible = true
+				tween_service:Create(
+					intro_scale,
+					TweenInfo.new(0.34, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+					{Scale = 1}
+				):Play()
+
+				tween_service:Create(
+					hero_scale,
+					TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+					{Scale = 1.035}
+				):Play()
+
+				tween_service:Create(
+					overlay_scale,
+					TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+					{Scale = 1.02}
+				):Play()
+
+				local fade_info = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+				for _, target in ipairs(fade_targets) do
+					if target and target.Parent then
+						tween_service:Create(target, fade_info, {BackgroundTransparency = 1}):Play()
+					end
+				end
+
+				for _, descendant in ipairs(overlay:GetDescendants()) do
+					if descendant:IsA("TextLabel") then
+						tween_service:Create(descendant, fade_info, {TextTransparency = 1}):Play()
+					elseif descendant:IsA("ImageLabel") then
+						tween_service:Create(descendant, fade_info, {ImageTransparency = 1}):Play()
+					elseif descendant:IsA("UIStroke") then
+						tween_service:Create(descendant, fade_info, {Transparency = 1}):Play()
+					elseif descendant:IsA("Frame") and descendant.Name == "shadow" then
+						tween_service:Create(descendant, fade_info, {BackgroundTransparency = 1}):Play()
+					end
+				end
+
+				task.wait(0.34)
+
+				if overlay_root and overlay_root.Parent then
+					overlay_root:Destroy()
+				end
+				items.loader_overlay = nil
+			end)
+		end
+	--
+
 	-- elements 
 		local function get_ui_mount_parent()
 			if library.hidden_gui_parent and library.hidden_gui_parent.Parent then
@@ -2275,6 +2948,7 @@
 					AnchorPoint = vec2(cfg.anchor_point.X, cfg.anchor_point.Y),
 					Position = cfg.position,
 					Active = true,
+					Visible = false,
 					BorderColor3 = rgb(0, 0, 0),
 					Size = cfg.size,
 					BorderSizePixel = 0,
@@ -2573,6 +3247,8 @@
 				local minimize_button = create_header_action_button("minus", "-")
 				local fullscreen_button = create_header_action_button("expand", "+")
 				local close_button = create_header_action_button("x", "x")
+				items.minimize_button = minimize_button
+				items.close_button = close_button
 
 				items.header.MouseEnter:Connect(function()
 					library:tween(header_hover, {
@@ -2631,7 +3307,11 @@
 				end
 
 				minimize_button.button.MouseButton1Click:Connect(function()
-					items.sgui.Enabled = false
+					if cfg.on_minimize then
+						cfg.on_minimize()
+					else
+						items.sgui.Enabled = false
+					end
 				end)
 
 				fullscreen_button.button.MouseButton1Click:Connect(function()
@@ -2639,7 +3319,25 @@
 				end)
 
 				close_button.button.MouseButton1Click:Connect(function()
-					items.sgui.Enabled = false
+					if cfg.on_close then
+						cfg.on_close()
+					else
+						-- Destroy all GUIs
+						for _, gui in library.guis do
+							if gui and gui.Parent then
+								gui:Destroy()
+							end
+						end
+						-- Disconnect all connections
+						for _, connection in library.connections do
+							if connection then
+								connection:Disconnect()
+							end
+						end
+						-- Clear tables
+						library.guis = {}
+						library.connections = {}
+					end
 				end)
 
 				update_fullscreen_button_visual()
@@ -3213,10 +3911,16 @@
 				tooltip_sgui.Enabled = true
 				library.cache.Enabled = false
 
+				-- Keep toggle button always visible
+				if window.toggle_sgui then
+					window.toggle_sgui.Enabled = true
+				end
+
 				for _, tooltip in tooltip_sgui:GetChildren() do
 					tooltip.Visible = false
 				end
 
+				-- Close any opened dropdown/popup windows when hiding UI
 				if library.current_element_open then
 					local current = library.current_element_open
 					current.set_visible(false)
@@ -3355,7 +4059,7 @@
 
 			-- main window
 				local main_window = library:panel({
-					name = properties and properties.name or "Atlanta | ",
+					name = properties and properties.name or "Axon | ",
 					size = properties and properties.size or dim2(0, 740, 0, 620),
 					position = properties and properties.position or nil,
 					image = "rbxassetid://98823308062942",
@@ -3363,6 +4067,14 @@
 				})
 
 				local items = main_window.items
+
+				-- Hook minimize button to hide UI (can bring back with toggle button)
+				main_window.on_minimize = function()
+					window.set_menu_visibility(false)
+				end
+				-- Close button actually closes the UI
+				main_window.on_close = nil
+
 				window.tab_holder = items.module_tab_holder
 				window.module_tab_holder = items.module_tab_holder
 				window.system_tab_holder = items.system_tab_holder
@@ -3371,11 +4083,11 @@
 				window.visuals_tab = nil
 				window._esp_preview_section = nil
 
-				local watermark = library:watermark({default = os.date('Atlanta | %b %d %Y | %H:%M:%S')})
+				local watermark = library:watermark({default = os.date('Axon | %b %d %Y | %H:%M:%S')})
 
 				task.spawn(function()
 					while task.wait(1) do
-						watermark.change_text(os.date('Atlanta | %b %d %Y | %H:%M:%S'))
+						watermark.change_text(os.date('Axon | %b %d %Y | %H:%M:%S'))
 					end
 				end)
 
@@ -3411,6 +4123,117 @@
 				end
 
 				local theme_section = theme_column:section({name = "Theme"})
+
+			-- Theme Presets
+			local theme_presets = {
+				["Current"] = {
+					-- Keep current colors
+				},
+							["Emerald"] = {
+				outline = Color3.fromRGB(13, 71, 33),
+				inline = Color3.fromRGB(39, 87, 55),
+				accent = Color3.fromRGB(134, 172, 146),
+				glow = Color3.fromRGB(134, 172, 146),
+				shadow = Color3.fromRGB(13, 71, 33),
+				high_contrast = Color3.fromRGB(13, 71, 33),
+				low_contrast = Color3.fromRGB(80, 129, 96),
+				header_surface = Color3.fromRGB(80, 129, 96),
+				sidebar_surface = Color3.fromRGB(28, 87, 48),
+				content_surface = Color3.fromRGB(16, 74, 35),
+				section_surface = Color3.fromRGB(23, 81, 42),
+				nav_surface = Color3.fromRGB(90, 143, 108),
+				control_surface = Color3.fromRGB(70, 122, 87),
+				text = Color3.fromRGB(226, 229, 227),
+				text_outline = Color3.fromRGB(10, 49, 23),
+				text_secondary = Color3.fromRGB(226, 229, 227),
+			},
+			["Cherry"] = {
+				outline = Color3.fromRGB(71, 13, 27),
+				inline = Color3.fromRGB(87, 39, 50),
+				accent = Color3.fromRGB(172, 134, 143),
+				glow = Color3.fromRGB(172, 134, 143),
+				shadow = Color3.fromRGB(71, 13, 27),
+				high_contrast = Color3.fromRGB(71, 13, 27),
+				low_contrast = Color3.fromRGB(129, 80, 91),
+				header_surface = Color3.fromRGB(129, 80, 91),
+				sidebar_surface = Color3.fromRGB(87, 28, 42),
+				content_surface = Color3.fromRGB(74, 16, 29),
+				section_surface = Color3.fromRGB(81, 23, 36),
+				nav_surface = Color3.fromRGB(143, 90, 102),
+				control_surface = Color3.fromRGB(122, 70, 82),
+				text = Color3.fromRGB(229, 226, 226),
+				text_outline = Color3.fromRGB(49, 10, 19),
+				text_secondary = Color3.fromRGB(229, 226, 226),
+			},
+			["Ocean"] = {
+				outline = Color3.fromRGB(13, 43, 71),
+				inline = Color3.fromRGB(39, 63, 87),
+				accent = Color3.fromRGB(134, 153, 172),
+				glow = Color3.fromRGB(134, 153, 172),
+				shadow = Color3.fromRGB(13, 43, 71),
+				high_contrast = Color3.fromRGB(13, 43, 71),
+				low_contrast = Color3.fromRGB(80, 105, 129),
+				header_surface = Color3.fromRGB(80, 105, 129),
+				sidebar_surface = Color3.fromRGB(28, 59, 87),
+				content_surface = Color3.fromRGB(16, 46, 74),
+				section_surface = Color3.fromRGB(23, 53, 81),
+				nav_surface = Color3.fromRGB(90, 117, 143),
+				control_surface = Color3.fromRGB(70, 97, 122),
+				text = Color3.fromRGB(226, 227, 229),
+				text_outline = Color3.fromRGB(10, 30, 49),
+				text_secondary = Color3.fromRGB(226, 227, 229),
+			},
+			}
+
+			theme_section:dropdown({
+				name = "Theme Preset",
+				flag = "theme_preset",
+				default = "Current",
+				options = {"Current", "Emerald", "Cherry", "Ocean"},
+				callback = function(selected)
+					if selected == "Current" then return end
+
+					local preset = theme_presets[selected]
+					if not preset then return end
+
+					-- Apply all theme colors
+					for theme_key, color in pairs(preset) do
+						-- Map theme keys to their proper flag names
+						local flag_mapping = {
+							accent = "Theme Accent",
+							glow = "Theme Glow",
+							shadow = "Theme Shadow",
+							outline = "Theme Outline",
+							inline = "Theme Inline",
+							high_contrast = "Theme High Contrast",
+							low_contrast = "Theme Low Contrast",
+							header_surface = "Theme Header Surface",
+							sidebar_surface = "Theme Sidebar Surface",
+							content_surface = "Theme Content Surface",
+							section_surface = "Theme Section Surface",
+							nav_surface = "Theme Nav Surface",
+							control_surface = "Theme Control Surface",
+							text = "Theme Text",
+							text_outline = "Theme Text Outline",
+							text_secondary = "Theme Text Secondary",
+						}
+
+						local flag = flag_mapping[theme_key]
+						if flag and library.config_flags[flag] then
+							-- Use the setter function to properly update the colorpicker
+							library.config_flags[flag](color, 1)
+						end
+					end
+
+					-- Refresh contrast theme
+					refresh_contrast_theme()
+
+					library:notification({text = "Applied " .. selected .. " theme", time = 3})
+				end
+			})
+
+			theme_section:label({name = "Or customize colors manually below"})
+
 				add_theme_row(theme_section, "Accent & Fx", {
 					{name = "Accent", theme_key = "accent", flag = "Theme Accent"},
 					{name = "Glow", theme_key = "glow", flag = "Theme Glow"},
@@ -3489,51 +4312,107 @@
 
 			-- cfg holder
 				getgenv().load_config = function(name)
-					library:load_config(readfile(library.directory .. "/configs/" .. name .. ".cfg"))
-				end
+				library:load_config(readfile(library.directory .. "/configs/" .. name .. ".cfg"))
+			end
 
-				local configs_column = Configs:column()
-				local configs_section = configs_column:section({name = "Configurations"})
-				config_holder = configs_section:list({flag = "config_name_list"})
-				configs_section:textbox({flag = "config_name_text_box"})
-				configs_section:button_holder({})
-				configs_section:button({name = "Create", callback = function()
-					writefile(library.directory .. "/configs/" .. flags["config_name_text_box"] .. ".cfg", library:get_config())
-					library:config_list_update()
-				end})
-				configs_section:button({name = "Delete", callback = function()
-					delfile(library.directory .. "/configs/" .. flags["config_name_list"] .. ".cfg")
-					library:config_list_update()
-				end})
-				configs_section:button_holder({})
-				configs_section:button({name = "Load", callback = function()
+			-- Left Column: Config Management
+			local configs_left = Configs:column()
+
+			-- Config Browser Section
+			local browser_section = configs_left:section({name = "Config Browser"})
+			browser_section:label({name = "Select a configuration to manage"})
+			config_holder = browser_section:list({flag = "config_name_list"})
+
+			browser_section:button_holder({})
+			browser_section:button({name = "Refresh List", callback = function()
+				library:config_list_update()
+				library:notification({text = "Config list refreshed", time = 2})
+			end})
+
+			-- Quick Actions Section
+			local quick_actions = configs_left:section({name = "Quick Actions"})
+			quick_actions:label({name = "Load and save configurations"})
+
+			quick_actions:button_holder({})
+			quick_actions:button({name = "Load Selected", callback = function()
+				if flags["config_name_list"] then
 					library:load_config(readfile(library.directory .. "/configs/" .. flags["config_name_list"] .. ".cfg"))
-					library:notification({text = "Loaded Config: " .. flags["config_name_list"], time = 3})
-				end})
-				configs_section:button({name = "Save", callback = function()
+					library:notification({text = "Loaded: " .. flags["config_name_list"], time = 3})
+				else
+					library:notification({text = "No config selected", time = 2})
+				end
+			end})
+			quick_actions:button({name = "Save to Selected", callback = function()
+				if flags["config_name_list"] then
 					writefile(library.directory .. "/configs/" .. flags["config_name_list"] .. ".cfg", library:get_config())
 					library:config_list_update()
-					library:notification({text = "Saved Config: " .. flags["config_name_list"], time = 3})
-				end})
-				configs_section:button_holder({})
-				configs_section:button({name = "Refresh Configs", callback = function()
+					library:notification({text = "Saved: " .. flags["config_name_list"], time = 3})
+				else
+					library:notification({text = "No config selected", time = 2})
+				end
+			end})
+
+			quick_actions:button_holder({})
+			quick_actions:button({name = "Delete Selected", callback = function()
+				if flags["config_name_list"] then
+					delfile(library.directory .. "/configs/" .. flags["config_name_list"] .. ".cfg")
 					library:config_list_update()
-				end})
-				configs_section:button_holder({})
-				configs_section:button({name = "Unload Config", callback = function()
-					library:load_config(library.old_config)
-				end})
-				configs_section:button({name = "Unload Menu", callback = function()
-					library:load_config(library.old_config)
+					library:notification({text = "Deleted: " .. flags["config_name_list"], time = 3})
+				else
+					library:notification({text = "No config selected", time = 2})
+				end
+			end})
 
-					for _, gui in library.guis do
-						gui:Destroy()
-					end
+			-- Right Column: Create New & Advanced
+			local configs_right = Configs:column()
 
-					for _, connection in library.connections do
-						connection:Disconnect()
-					end
-				end})
+			-- Create New Config Section
+			local create_section = configs_right:section({name = "Create New Config"})
+			create_section:label({name = "Enter a name for your new configuration"})
+			create_section:textbox({flag = "config_name_text_box", placeholder = "Config name..."})
+
+			create_section:button_holder({})
+			create_section:button({name = "Create Config", callback = function()
+				if flags["config_name_text_box"] and flags["config_name_text_box"] ~= "" then
+					writefile(library.directory .. "/configs/" .. flags["config_name_text_box"] .. ".cfg", library:get_config())
+					library:config_list_update()
+					library:notification({text = "Created: " .. flags["config_name_text_box"], time = 3})
+					flags["config_name_text_box"] = ""
+				else
+					library:notification({text = "Please enter a config name", time = 2})
+				end
+			end})
+
+			-- Advanced Options Section
+			local advanced_section = configs_right:section({name = "Advanced Options"})
+			advanced_section:label({name = "Reset and system options"})
+
+			advanced_section:button_holder({})
+			advanced_section:button({name = "Unload Config", callback = function()
+				library:load_config(library.old_config)
+				library:notification({text = "Config unloaded", time = 2})
+			end})
+
+			advanced_section:button_holder({})
+			advanced_section:button({name = "Unload Menu", callback = function()
+				library:load_config(library.old_config)
+				library:notification({text = "Menu unloading...", time = 2})
+
+				for _, gui in library.guis do
+					gui:Destroy()
+				end
+
+				for _, connection in library.connections do
+					connection:Disconnect()
+				end
+			end})
+
+			-- Info Section
+			local info_section = configs_right:section({name = "Information"})
+			info_section:label({name = "Configs are saved automatically"})
+			info_section:label({name = "Location: " .. library.directory .. "/configs/"})
+			info_section:label({name = "Format: .cfg file"})
+			info_section:label({name = "Tip: Create multiple configs for different scenarios"})
 			--
 
 			-- Backward compatibility: older scripts use window.esp_section:esp_preview(...)
@@ -3561,6 +4440,152 @@
 			--  
 
 			Settings.open_tab()
+			library:play_window_intro(items, main_window)
+
+			-- mini toggle button (top center, draggable, tap icon)
+			do
+				local toggle_btn_size = 35
+				local icon_size = 30
+
+				-- Separate ScreenGui so it never gets disabled
+				local toggle_sgui = library:create("ScreenGui", {
+					Parent = get_ui_mount_parent(),
+					Name = "",
+					DisplayOrder = 999999,
+					ResetOnSpawn = false,
+					IgnoreGuiInset = false,
+				})
+
+				-- Outer container for shadow effect
+				local toggle_container = library:create("Frame", {
+					Parent = toggle_sgui,
+					Name = "",
+					AnchorPoint = vec2(0.5, 0.5),
+					Position = dim2(0.5, 0, 0, 10 + toggle_btn_size / 2),
+					Size = dim2(0, toggle_btn_size, 0, toggle_btn_size),
+					BackgroundTransparency = 1,
+				})
+
+				local toggle_btn = library:create("ImageButton", {
+					Parent = toggle_container,
+					Name = "",
+					AnchorPoint = vec2(0.5, 0.5),
+					Position = dim2(0.5, 0, 0.5, 0),
+					Size = dim2(1, 0, 1, 0),
+					BackgroundColor3 = themes.preset.inline,
+					BackgroundTransparency = 0,
+					BorderSizePixel = 0,
+					AutoButtonColor = false,
+					Image = "",
+				})
+				library:apply_theme(toggle_btn, "inline", "BackgroundColor3")
+				library:apply_corner(toggle_btn, 8)
+
+				-- Gradient overlay
+				local btn_gradient = library:create("UIGradient", {
+					Parent = toggle_btn,
+					Rotation = 90,
+					Color = themes.preset.contrast,
+					Transparency = numseq{
+						numkey(0, 0.3),
+						numkey(1, 0.6),
+					}
+				})
+				library:apply_theme(btn_gradient, "contrast", "Color")
+
+				-- Stroke
+				local btn_stroke = library:create("UIStroke", {
+					Parent = toggle_btn,
+					Color = themes.preset.outline,
+					Thickness = 1,
+					Transparency = 0.3,
+				})
+				library:apply_theme(btn_stroke, "outline", "Color")
+
+				-- Icon
+				local toggle_icon = library:create("ImageLabel", {
+					Parent = toggle_btn,
+					Name = "",
+					AnchorPoint = vec2(0.5, 0.5),
+					Position = dim2(0.5, 0, 0.5, 0),
+					Size = dim2(0, icon_size, 0, icon_size),
+					BackgroundTransparency = 1,
+					Image = "rbxassetid://130540781756620",
+					ImageColor3 = themes.preset.text,
+					ImageTransparency = 0,
+					ScaleType = Enum.ScaleType.Fit,
+				})
+				library:apply_theme(toggle_icon, "text", "ImageColor3")
+
+				-- Dragging logic (custom to avoid conflicts)
+				local dragging = false
+				local drag_offset = vec2(0, 0)
+
+				toggle_btn.InputBegan:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 then
+						dragging = true
+						-- Calculate offset from mouse to the container's center
+						local abs_pos = toggle_container.AbsolutePosition
+						local center_x = abs_pos.X + toggle_btn_size / 2
+						local center_y = abs_pos.Y + toggle_btn_size / 2
+						drag_offset = vec2(input.Position.X - center_x, input.Position.Y - center_y)
+					end
+				end)
+
+				toggle_btn.InputEnded:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 then
+						if dragging then
+							dragging = false
+						end
+					end
+				end)
+
+				-- Separate click detection
+				local click_start_pos = nil
+				toggle_btn.MouseButton1Down:Connect(function()
+					click_start_pos = vec2(mouse.X, mouse.Y)
+				end)
+				toggle_btn.MouseButton1Up:Connect(function()
+					if click_start_pos then
+						local delta = (vec2(mouse.X, mouse.Y) - click_start_pos).Magnitude
+						if delta < 5 then
+							window.set_menu_visibility(not window.opened)
+						end
+						click_start_pos = nil
+					end
+				end)
+
+				library:connection(uis.InputChanged, function(input)
+					if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+						local viewport = camera.ViewportSize
+						local target_x = input.Position.X - drag_offset.X
+						local target_y = input.Position.Y - drag_offset.Y
+
+						-- Clamp to screen bounds
+						target_x = clamp(target_x, toggle_btn_size / 2, viewport.X - toggle_btn_size / 2)
+						target_y = clamp(target_y, toggle_btn_size / 2, viewport.Y - toggle_btn_size / 2)
+
+						-- Smooth movement with tween
+						library:tween(toggle_container, {
+							Position = dim2(0, target_x, 0, target_y)
+						}, 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+					end
+				end)
+
+				-- Hover effects
+				toggle_btn.MouseEnter:Connect(function()
+					library:tween(toggle_btn, {BackgroundTransparency = 0}, 0.12)
+					library:tween(btn_stroke, {Transparency = 0}, 0.12)
+					library:tween(toggle_icon, {ImageTransparency = 0}, 0.12)
+				end)
+				toggle_btn.MouseLeave:Connect(function()
+					library:tween(toggle_btn, {BackgroundTransparency = 0}, 0.12)
+					library:tween(btn_stroke, {Transparency = 0.3}, 0.12)
+				end)
+
+				window.toggle_button = toggle_btn
+				window.toggle_sgui = toggle_sgui
+			end
 
 			return window
 		end
