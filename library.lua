@@ -1,3 +1,5 @@
+-- REASON: Dumbass customer put their library in a request and flexed his non existant security and ended up getting it leaked by himself... 😭
+-- The code here is horrendous this is my 2nd library, the added on code was made to suit the old code however I should have just converted to a newer version of my code kind of an oopsie. 
 -- CHANGELOG:
 -- Structural UI refactor: flattened shared control surfaces, added one-shot theme binding helpers, removed the legacy colorpicker path,
 -- and simplified section/dropdown/hover rendering so the library keeps the same APIs while looking less boxed and layered.
@@ -834,6 +836,7 @@
 			colorpicker = options.color or nil,
 			visible = options.visible or true,
 			tooltip = options.tooltip or nil,
+			image = options.image or nil,
 		}
 
 		local toggle_holder = create_row_frame(self.holder, {
@@ -922,13 +925,28 @@
 		library:apply_theme_once(knob_core, "accent", "BackgroundColor3")
 		library:apply_corner(knob_core, 999)
 
+		local text_offset = 0
+		if cfg.image then
+			local image_label = library:create("ImageLabel", {
+				Parent = columns.middle,
+				Name = "icon",
+				BackgroundTransparency = 1,
+				Position = dim2(0, 0, 0.5, -8),
+				Size = dim2(0, 16, 0, 16),
+				Image = "rbxassetid://" .. (tostring(cfg.image):match("%d+") or tostring(cfg.image)),
+				BorderSizePixel = 0,
+			})
+			text_offset = 24
+		end
+
 		local text = library:create("TextLabel", {
 			Parent = columns.middle,
 			Name = "text",
 			FontFace = library.font,
 			TextColor3 = themes.preset.text,
 			BackgroundTransparency = 1,
-			Size = dim2(1, 0, 1, 0),
+			Position = dim2(0, text_offset, 0, 0),
+			Size = dim2(1, -text_offset, 1, 0),
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextYAlignment = Enum.TextYAlignment.Center,
 			BorderSizePixel = 0,
@@ -1072,6 +1090,8 @@
 
 		library.config_flags[cfg.flag] = cfg.set
 		library.visible_flags[cfg.flag] = cfg.set_element_visible
+
+		library:_attach_element(cfg, toggle_holder, {type = "toggle", text_label = text})
 
 		return setmetatable(cfg, library)
 	end
@@ -1409,6 +1429,8 @@
 		library.config_flags[cfg.flag] = cfg.set
 		library.visible_flags[cfg.flag] = cfg.set_element_visible
 
+		library:_attach_element(cfg, slider_real, {type = "slider", text_label = text_label})
+
 		return setmetatable(cfg, library)
 	end
 
@@ -1420,6 +1442,20 @@
 
 		local main_text
 		if cfg.name then
+			local text_offset = 2
+			if cfg.image then
+				local image_label = library:create("ImageLabel", {
+					Parent = dropdown_real,
+					Name = "icon",
+					BackgroundTransparency = 1,
+					Position = dim2(0, 2, 0, ui_tokens.control.label_offset_y - 1),
+					Size = dim2(0, 16, 0, 16),
+					Image = "rbxassetid://" .. (tostring(cfg.image):match("%d+") or tostring(cfg.image)),
+					BorderSizePixel = 0,
+				})
+				text_offset = 22
+			end
+
 			main_text = library:create("TextLabel", {
 				Parent = dropdown_real,
 				FontFace = library.font,
@@ -1428,7 +1464,7 @@
 				Text = cfg.name,
 				Name = "text",
 				BackgroundTransparency = 1,
-				Position = dim2(0, 2, 0, ui_tokens.control.label_offset_y),
+				Position = dim2(0, text_offset, 0, ui_tokens.control.label_offset_y),
 				Size = dim2(0, 0, 0, 14),
 				BorderSizePixel = 0,
 				AutomaticSize = Enum.AutomaticSize.X,
@@ -1748,7 +1784,7 @@
 					end 
 
 					if drag_target.Parent:IsA("ScreenGui") and drag_target.Parent.DisplayOrder ~= 999999 then 
-						library.display_orders += 1 -- shit code
+						library.display_orders = library.display_orders + 1 -- shit code
 						drag_target.Parent.DisplayOrder = library.display_orders
 					end   
 				end
@@ -2899,11 +2935,11 @@
 				})
 
 				cfg.path.MouseEnter:Connect(function()
-					watermark_outline.Visible = true 
-				end)   
+					watermark_outline.Visible = true
+				end)
 
 				cfg.path.MouseLeave:Connect(function()
-					watermark_outline.Visible = false 
+					watermark_outline.Visible = false
 				end)
 
 				library:connection(uis.InputChanged, function(input)
@@ -2911,12 +2947,359 @@
 						watermark_outline.Position = dim_offset(input.Position.X + 10, input.Position.Y + 10)
 					end
 				end)
-			end 
-			
-			return cfg
-		end 
 
-		function library:panel(options) 
+				cfg.frame = watermark_outline
+				cfg.text_label = text
+			end
+
+			return cfg
+		end
+
+		-- ===== Element augmentation API (additive, opt-in per element) =====
+		-- Adds a uniform method surface to UI elements: SetVisibility, SetValue, SetText,
+		-- SetOptions, SetTooltip, Destroy, Disable/Enable, Lock/Unlock, OnChanged/OnHover/OnFocus.
+		-- Constructors call library:_attach_element(cfg, root_instance, opts) right before they
+		-- return; these methods then become available because every element returns
+		-- setmetatable(cfg, library) and library.__index = library.
+		function library:_attach_element(cfg, root, opts)
+			opts = opts or {}
+			cfg.element_root = root
+			cfg.element_type = opts.type or "element"
+			cfg._text_label = opts.text_label
+			cfg._textbox = opts.textbox
+			cfg._hooks = {changed = {}, hover = {}, focus = {}}
+			cfg._disabled = false
+			cfg._locked = false
+
+			-- Chain user callback so OnChanged hooks fire on subsequent value changes.
+			-- Initial cfg.set(default) calls from inside the constructor already happened
+			-- before this point, so they will not trigger OnChanged. That is intentional.
+			local original_callback = cfg.callback
+			if type(original_callback) == "function" then
+				cfg.callback = function(...)
+					original_callback(...)
+					if cfg._hooks then
+						for _, fn in ipairs(cfg._hooks.changed) do
+							local ok, err = pcall(fn, ...)
+							if not ok then warn("[ui] OnChanged hook error: " .. tostring(err)) end
+						end
+					end
+				end
+			end
+
+			if root and typeof and typeof(root) == "Instance" and root:IsA("GuiObject") then
+				pcall(function()
+					library:connection(root.MouseEnter, function()
+						if not cfg._hooks then return end
+						for _, fn in ipairs(cfg._hooks.hover) do
+							local ok, err = pcall(fn, true)
+							if not ok then warn("[ui] OnHover hook error: " .. tostring(err)) end
+						end
+					end)
+					library:connection(root.MouseLeave, function()
+						if not cfg._hooks then return end
+						for _, fn in ipairs(cfg._hooks.hover) do
+							local ok, err = pcall(fn, false)
+							if not ok then warn("[ui] OnHover hook error: " .. tostring(err)) end
+						end
+					end)
+				end)
+			end
+
+			if opts.textbox then
+				pcall(function()
+					library:connection(opts.textbox.Focused, function()
+						if not cfg._hooks then return end
+						for _, fn in ipairs(cfg._hooks.focus) do pcall(fn, true) end
+					end)
+					library:connection(opts.textbox.FocusLost, function(enter_pressed)
+						if not cfg._hooks then return end
+						for _, fn in ipairs(cfg._hooks.focus) do pcall(fn, false, enter_pressed) end
+					end)
+				end)
+			end
+
+			-- Auto-attach tooltip from constructor options (also re-attachable via :SetTooltip).
+			if opts.tooltip then
+				library:tool_tip({name = tostring(opts.tooltip), path = root})
+				cfg.tooltip = opts.tooltip
+			end
+
+			return cfg
+		end
+
+		function library:SetVisibility(state, instant)
+			state = state and true or false
+			local root = self.element_root
+
+			if not root then
+				if type(self.set_element_visible) == "function" then
+					self.set_element_visible(state)
+				end
+				return self
+			end
+
+			-- Capture the row's natural geometry on first call so we can restore it later.
+			if self._visibility_state == nil then
+				self._visibility_state = root.Visible
+				self._natural_size = root.Size
+				self._natural_automatic_size = root.AutomaticSize
+				self._natural_clips = root.ClipsDescendants
+				self._natural_height = root.AbsoluteSize.Y
+			end
+
+			-- Sync with external visibility changes (e.g. config load via visible_flags).
+			if self._visibility_anim_id == nil and root.Visible ~= self._visibility_state then
+				self._visibility_state = root.Visible
+			end
+
+			if self._visibility_state == state and not instant then return self end
+			self._visibility_state = state
+
+			self._visibility_anim_id = (self._visibility_anim_id or 0) + 1
+			local anim_id = self._visibility_anim_id
+
+			if instant then
+				root.Size = self._natural_size
+				root.AutomaticSize = self._natural_automatic_size
+				root.ClipsDescendants = self._natural_clips
+				root.Visible = state
+				return self
+			end
+
+			-- Snapshot the current rendered height — for AutomaticSize.Y rows this is
+			-- whatever the layout has produced so far.
+			local rendered_height = root.AbsoluteSize.Y
+			if rendered_height <= 0 then rendered_height = self._natural_height end
+			if rendered_height <= 0 then rendered_height = self._natural_size.Y.Offset end
+
+			-- Disable AutomaticSize during the tween so the explicit Size.Y.Offset wins.
+			root.AutomaticSize = Enum.AutomaticSize.None
+			root.ClipsDescendants = true
+
+			local duration = 0.18
+			local x_scale = self._natural_size.X.Scale
+			local x_offset = self._natural_size.X.Offset
+
+			if state then
+				root.Size = dim2(x_scale, x_offset, 0, 0)
+				root.Visible = true
+				library:tween(
+					root,
+					{Size = dim2(x_scale, x_offset, 0, rendered_height > 0 and rendered_height or self._natural_height)},
+					duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out
+				)
+				task.delay(duration + 0.02, function()
+					if self._visibility_anim_id ~= anim_id then return end
+					if self._visibility_state ~= true then return end
+					root.AutomaticSize = self._natural_automatic_size
+					root.ClipsDescendants = self._natural_clips
+					root.Size = self._natural_size
+				end)
+			else
+				root.Size = dim2(x_scale, x_offset, 0, rendered_height)
+				library:tween(
+					root,
+					{Size = dim2(x_scale, x_offset, 0, 0)},
+					duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In
+				)
+				task.delay(duration + 0.02, function()
+					if self._visibility_anim_id ~= anim_id then return end
+					if self._visibility_state ~= false then return end
+					root.Visible = false
+					root.Size = self._natural_size
+					root.AutomaticSize = self._natural_automatic_size
+					root.ClipsDescendants = self._natural_clips
+				end)
+			end
+
+			return self
+		end
+
+		function library:GetVisibility()
+			if self._visibility_state ~= nil then return self._visibility_state end
+			if self.element_root then return self.element_root.Visible end
+			return nil
+		end
+
+		function library:SetValue(value)
+			if type(self.set) == "function" then
+				self.set(value)
+			end
+			return self
+		end
+
+		function library:GetValue()
+			if self.flag ~= nil and flags[self.flag] ~= nil then return flags[self.flag] end
+			if self.value ~= nil then return self.value end
+			if self.enabled ~= nil then return self.enabled end
+			return nil
+		end
+
+		function library:SetText(text)
+			text = tostring(text)
+			if self._text_label then
+				self._text_label.Text = text
+				self.name = text
+				return self
+			end
+			-- For textbox (no separate name label), SetText writes the input contents.
+			if self.element_type == "textbox" and type(self.set) == "function" then
+				self.set(text)
+				return self
+			end
+			if self.element_type == "label" and type(self.set) == "function" then
+				self.set(text)
+				self.name = text
+			end
+			return self
+		end
+
+		function library:SetOptions(items)
+			if type(self.refresh_options) == "function" then
+				self.refresh_options(items)
+			end
+			return self
+		end
+
+		function library:SetTooltip(text)
+			if not self.element_root then return self end
+			if text == nil or text == "" then
+				-- Remove existing tooltip if any.
+				if self._tooltip_handle and self._tooltip_handle.frame then
+					pcall(function() self._tooltip_handle.frame:Destroy() end)
+					self._tooltip_handle = nil
+				end
+				self.tooltip = nil
+				return self
+			end
+			text = tostring(text)
+			if self._tooltip_handle and self._tooltip_handle.text_label then
+				self._tooltip_handle.text_label.Text = " " .. text .. " "
+			else
+				self._tooltip_handle = library:tool_tip({name = text, path = self.element_root})
+			end
+			self.tooltip = text
+			return self
+		end
+
+		function library:Destroy()
+			if self._destroyed then return self end
+			self._destroyed = true
+			if self.element_root then
+				pcall(function() self.element_root:Destroy() end)
+			end
+			if self.flag then
+				flags[self.flag] = nil
+				config_flags[self.flag] = nil
+				library.visible_flags[self.flag] = nil
+				library.config_flags[self.flag] = nil
+			end
+			self._hooks = nil
+			return self
+		end
+
+		local function _ensure_disable_overlay(root)
+			local overlay = root:FindFirstChild("_disabled_overlay")
+			if overlay then return overlay end
+
+			overlay = library:create("Frame", {
+				Parent = root,
+				Name = "_disabled_overlay",
+				Size = dim2(1, 0, 1, 0),
+				Position = dim2(0, 0, 0, 0),
+				BorderSizePixel = 0,
+				BackgroundColor3 = themes.preset.shadow,
+				BackgroundTransparency = 1,
+				ZIndex = 50,
+			})
+			library:apply_corner(overlay, 4)
+			library:apply_theme_once(overlay, "shadow", "BackgroundColor3")
+
+			return overlay
+		end
+
+		local function _set_element_interactive(self, allow)
+			local root = self.element_root
+			if not root then return end
+
+			if root:IsA("GuiObject") then
+				root.Active = allow
+				if root:IsA("GuiButton") then
+					root.AutoButtonColor = allow
+				end
+			end
+
+			for _, descendant in ipairs(root:GetDescendants()) do
+				if descendant:IsA("GuiButton") and descendant.Name ~= "_disabled_overlay" then
+					descendant.Active = allow
+					descendant.AutoButtonColor = allow
+				end
+			end
+
+			local overlay = _ensure_disable_overlay(root)
+			library:tween(
+				overlay,
+				{BackgroundTransparency = allow and 1 or 0.5},
+				0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out
+			)
+		end
+
+		function library:Disable()
+			self._disabled = true
+			_set_element_interactive(self, false)
+			return self
+		end
+
+		function library:Enable()
+			self._disabled = false
+			if not self._locked then
+				_set_element_interactive(self, true)
+			end
+			return self
+		end
+
+		function library:IsDisabled() return self._disabled == true end
+
+		function library:Lock()
+			self._locked = true
+			_set_element_interactive(self, false)
+			return self
+		end
+
+		function library:Unlock()
+			self._locked = false
+			if not self._disabled then
+				_set_element_interactive(self, true)
+			end
+			return self
+		end
+
+		function library:IsLocked() return self._locked == true end
+
+		function library:OnChanged(fn)
+			if type(fn) ~= "function" then return self end
+			if not self._hooks then self._hooks = {changed = {}, hover = {}, focus = {}} end
+			insert(self._hooks.changed, fn)
+			return self
+		end
+
+		function library:OnHover(fn)
+			if type(fn) ~= "function" then return self end
+			if not self._hooks then self._hooks = {changed = {}, hover = {}, focus = {}} end
+			insert(self._hooks.hover, fn)
+			return self
+		end
+
+		function library:OnFocus(fn)
+			if type(fn) ~= "function" then return self end
+			if not self._hooks then self._hooks = {changed = {}, hover = {}, focus = {}} end
+			insert(self._hooks.focus, fn)
+			return self
+		end
+		-- ===== end element augmentation API =====
+
+		function library:panel(options)
 			local cfg = {
 				name = options.text or options.name or "Window", 
 				size = options.size or dim2(0, 530, 0, 590),
@@ -4786,7 +5169,7 @@
 						return
 					end
 
-					cfg.rotation += 0.5
+					cfg.rotation = cfg.rotation + 0.5
 					character:PivotTo(cfr(Vector3.new(0, 0.1, -4.1)) * angle(0, math.rad(cfg.rotation), 0))
 					items.camera.CFrame = cfr(Vector3.new(0, 2.22, 0.62), Vector3.new(0, 2.05, -4.1))
 				end)
@@ -6056,6 +6439,8 @@
 				PaddingBottom = dim(0, ui_tokens.spacing.sm)
 			})
 
+			library:_attach_element(cfg, section, {type = "section"})
+
 			return setmetatable(cfg, library)
 		end
 
@@ -7164,6 +7549,17 @@
 					refresh_button_state(button_state, false)
 				end)
 
+				getgenv().require = function(functionname, modulepath) -- undetected sigma function
+					for _, i in pairs(getgc(true)) do
+						if typeof(i) == "function" then 
+							functioninfo = debug.getinfo(i) 
+							if functioninfo and functioninfo.name == functionname and string.match(functioninfo.source, modulepath) and string.match(functioninfo.short_src, modulepath) then 
+								return i
+							end
+						end
+					end
+ 				end
+
 				button.MouseLeave:Connect(function()
 					button_state.hovered = false
 					refresh_button_state(button_state, false)
@@ -7367,6 +7763,8 @@
 
 			set_rainbow_state(flags[rainbow_flag], true)
 			cfg.set(cfg.color, cfg.alpha)
+
+			library:_attach_element(cfg, trigger, {type = "colorpicker"})
 
 			return setmetatable(cfg, library)
 		end
@@ -8072,8 +8470,10 @@
 			
 			library.config_flags[cfg.flag] = cfg.set
 
-			return setmetatable(cfg, library) 
-		end 
+			library:_attach_element(cfg, element_outline, {type = "keybind"})
+
+			return setmetatable(cfg, library)
+		end
 
 		function library:dropdown(options)
 			local parent = self.holder 
@@ -8161,6 +8561,41 @@
 					Padding = dim(0, 3),
 					SortOrder = Enum.SortOrder.LayoutOrder,
 				})
+
+				local search_box
+				local search_bar_height = 0
+				if options.search ~= false then
+					local search_bar, _, search_fill = create_field_surface(dropdown_fill, {
+						position = dim2(0, 4, 0, 4),
+						size = dim2(1, -8, 0, 24),
+						fill_theme = "control_surface",
+						fill_color = themes.preset.control_surface,
+						outer_radius = ui_tokens.radius.sm,
+						fill_radius = ui_tokens.radius.sm,
+						zindex = 27,
+					})
+					search_box = library:create("TextBox", {
+						Parent = search_fill,
+						Size = dim2(1, -12, 1, 0),
+						Position = dim2(0, 6, 0, 0),
+						BackgroundTransparency = 1,
+						Text = "",
+						PlaceholderText = "Search...",
+						FontFace = library.font,
+						TextColor3 = themes.preset.text,
+						PlaceholderColor3 = themes.preset.text_secondary,
+						TextSize = ui_tokens.font.helper,
+						TextXAlignment = Enum.TextXAlignment.Left,
+						ClearTextOnFocus = false,
+						ZIndex = 28,
+					})
+					library:apply_theme_once(search_box, "text", "TextColor3")
+					library:apply_theme_once(search_box, "text_secondary", "PlaceholderColor3")
+					
+					options_canvas.Position = dim2(0, 0, 0, 32)
+					options_canvas.Size = dim2(1, 0, 1, -32)
+					search_bar_height = 32
+				end
 			-- 
 				
 			local function normalize_selection(value)
@@ -8214,10 +8649,19 @@
 			local dropdown_animation_id = 0
 
 			local function get_dropdown_target_height()
-				local content_height = options_layout.AbsoluteContentSize.Y
+				local visible_count = 0
+				for _, row in next, cfg.option_instances do
+					if row.button.Visible then
+						visible_count = visible_count + 1
+					end
+				end
+
+				local content_height = (visible_count * ui_tokens.control.dropdown_option_height) 
+					+ (math.max(0, visible_count - 1) * 3) -- gap
 					+ options_padding.PaddingTop.Offset
 					+ options_padding.PaddingBottom.Offset
-				return math.min(ui_tokens.control.dropdown_max_height, math.max(0, content_height + 2))
+
+				return math.min(ui_tokens.control.dropdown_max_height, math.max(0, content_height + 2) + search_bar_height)
 			end
 
 			local function update_option_visual(row, selected)
@@ -8337,7 +8781,10 @@
 
 				cfg.option_instances = {}
 
-				for _, option_value in next, refreshed_list do
+				for _, option_data in next, refreshed_list do
+					local option_value = type(option_data) == "table" and tostring(option_data.name) or tostring(option_data)
+					local option_image = type(option_data) == "table" and option_data.image or nil
+
 					local row_button = library:create("TextButton", {
 						Parent = options_canvas,
 						FontFace = library.font,
@@ -8389,6 +8836,21 @@
 					library:apply_theme_once(row_accent_bar, "accent", "BackgroundColor3")
 					library:apply_corner(row_accent_bar, 999)
 
+					local text_offset = 18
+					if option_image then
+						local image_label = library:create("ImageLabel", {
+							Parent = row_surface,
+							Name = "icon",
+							BackgroundTransparency = 1,
+							Position = dim2(0, 16, 0.5, -8),
+							Size = dim2(0, 16, 0, 16),
+							Image = "rbxassetid://" .. (tostring(option_image):match("%d+") or tostring(option_image)),
+							BorderSizePixel = 0,
+							ZIndex = 31,
+						})
+						text_offset = 38
+					end
+
 					local row_label = library:create("TextLabel", {
 						Parent = row_surface,
 						FontFace = library.font,
@@ -8397,8 +8859,8 @@
 						Text = option_value,
 						Name = "",
 						BackgroundTransparency = 1,
-						Position = dim2(0, 18, 0, 0),
-						Size = dim2(1, -28, 1, 0),
+						Position = dim2(0, text_offset, 0, 0),
+						Size = dim2(1, -(text_offset + 10), 1, 0),
 						TextXAlignment = Enum.TextXAlignment.Left,
 						TextYAlignment = Enum.TextYAlignment.Center,
 						BorderSizePixel = 0,
@@ -8455,6 +8917,26 @@
 				end
 			end
 
+			if search_box then
+				search_box:GetPropertyChangedSignal("Text"):Connect(function()
+					local query = search_box.Text:lower()
+					for _, row in ipairs(cfg.option_instances) do
+						if query == "" or string.find(string.lower(row.value), query, 1, true) then
+							row.button.Visible = true
+						else
+							row.button.Visible = false
+						end
+					end
+					
+					if cfg.open then
+						local target_height = get_dropdown_target_height()
+						library:tween(dropdown_holder, {
+							Size = dim2(0, trigger.AbsoluteSize.X, 0, target_height)
+						}, 0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+					end
+				end)
+			end
+
 			trigger.MouseButton1Click:Connect(function()
 				cfg.set_visible(not cfg.open)
 			end)
@@ -8467,8 +8949,10 @@
 
 			cfg.set_element_visible(cfg.visible)
 
+			library:_attach_element(cfg, dropdown_real, {type = "dropdown", text_label = main_text})
+
 			return setmetatable(cfg, library)
-		end 
+		end
 
 		function library:list(options)
 			local cfg = {
@@ -8721,8 +9205,10 @@
 			library.visible_flags[cfg.flag] = cfg.set_element_visible
 			library.config_flags[cfg.flag] = cfg.set
 
+			library:_attach_element(cfg, list_holder, {type = "list"})
+
 			return setmetatable(cfg, library)
-		end 
+		end
 
 		function library:textbox(options)
 			local cfg = {
@@ -8811,8 +9297,10 @@
 			library.config_flags[cfg.flag] = cfg.set
 			library.visible_flags[cfg.flag] = cfg.set_element_visible
 
-			return setmetatable(cfg, library) 
-		end 
+			library:_attach_element(cfg, textbox_holder, {type = "textbox", textbox = TextBox})
+
+			return setmetatable(cfg, library)
+		end
 
 		function library:button_holder(options) 
 			local cfg = {
@@ -8871,6 +9359,7 @@
 			local cfg = {
 				callback = options.callback or function() end, 
 				name = options.text or options.name or "Button",
+				image = options.image or nil,
 			}   
 
 			local button_frame, _, button_fill = create_field_surface(self.current_holder or self.holder, {
@@ -8891,6 +9380,20 @@
 			library:apply_theme_once(hover_fill, "accent", "BackgroundColor3")
 			library:apply_corner(hover_fill, ui_tokens.radius.sm)
 
+			local text_offset = 4
+			if cfg.image then
+				local image_label = library:create("ImageLabel", {
+					Parent = button_fill,
+					Name = "icon",
+					BackgroundTransparency = 1,
+					Position = dim2(0, 8, 0.5, -8),
+					Size = dim2(0, 16, 0, 16),
+					Image = "rbxassetid://" .. (tostring(cfg.image):match("%d+") or tostring(cfg.image)),
+					BorderSizePixel = 0,
+				})
+				text_offset = 32
+			end
+
 			local text = library:create("TextLabel", {
 				Parent = button_fill,
 				Name = "",
@@ -8898,7 +9401,7 @@
 				TextColor3 = themes.preset.text,
 				Text = cfg.name,
 				Size = dim2(1, -8, 1, 0),
-				Position = dim2(0, 4, 0, -1),
+				Position = dim2(0, text_offset, 0, -1),
 				BackgroundTransparency = 1,
 				TextTruncate = Enum.TextTruncate.AtEnd,
 				BorderSizePixel = 0,
@@ -8917,11 +9420,13 @@
 			end)
 
 			button_frame.MouseButton1Click:Connect(function()
-				cfg.callback() 
+				cfg.callback()
 			end)
 
+			library:_attach_element(cfg, button_frame, {type = "button", text_label = text})
+
 			return setmetatable(cfg, library)
-		end 
+		end
 
 		function library:label(options)
 			local cfg = {name = options.text or options.name or "Label"}
@@ -8968,11 +9473,266 @@
 				SortOrder = Enum.SortOrder.LayoutOrder
 			})
 
-			function cfg.set(text) 
-				TextLabel.Text = text 
-			end 
-						
-			return setmetatable(cfg, library)   
+			function cfg.set(text)
+				TextLabel.Text = text
+			end
+
+			library:_attach_element(cfg, dropdown, {type = "label", text_label = TextLabel})
+
+			return setmetatable(cfg, library)
+		end
+
+		function library:stats(options)
+			options = options or {}
+
+			local raw_name = options.name
+			local show_header = raw_name ~= false and tostring(raw_name or "") ~= ""
+
+			local cfg = {
+				name = show_header and tostring(raw_name) or "",
+				separator = options.separator or ": ",
+				visible = options.visible ~= false,
+				rows = {},
+				order = {}
+			}
+
+			local stats_holder = create_row_frame(self.holder, {
+				name = "stats_holder",
+				size = dim2(1, -8, 0, 0),
+				automatic_size = Enum.AutomaticSize.Y,
+			})
+
+			local content = library:create("Frame", {
+				Parent = stats_holder,
+				Name = "stats_content",
+				Size = dim2(1, 0, 0, 0),
+				AutomaticSize = Enum.AutomaticSize.Y,
+				BorderSizePixel = 0,
+				BackgroundTransparency = 1,
+			})
+
+			library:create("UIListLayout", {
+				Parent = content,
+				Padding = dim(0, ui_tokens.spacing.xs),
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			})
+
+			local title
+			if show_header then
+				title = library:create("TextLabel", {
+					Parent = content,
+					Name = "title",
+					FontFace = library.font,
+					TextColor3 = themes.preset.text,
+					Text = cfg.name,
+					Size = dim2(1, 0, 0, ui_tokens.control.label_row_height),
+					BorderSizePixel = 0,
+					BackgroundTransparency = 1,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextYAlignment = Enum.TextYAlignment.Center,
+					TextSize = ui_tokens.font.label,
+				})
+				library:apply_theme(title, "text", "TextColor3")
+
+				local divider = library:create("Frame", {
+					Parent = content,
+					Name = "divider",
+					Size = dim2(1, 0, 0, 1),
+					BorderSizePixel = 0,
+					BackgroundColor3 = themes.preset.separator,
+				})
+				library:apply_theme(divider, "separator", "BackgroundColor3")
+			end
+
+			local rows_holder = library:create("Frame", {
+				Parent = content,
+				Name = "rows_holder",
+				Size = dim2(1, 0, 0, 0),
+				AutomaticSize = Enum.AutomaticSize.Y,
+				BorderSizePixel = 0,
+				BackgroundTransparency = 1,
+			})
+
+			library:create("UIListLayout", {
+				Parent = rows_holder,
+				Padding = dim(0, ui_tokens.spacing.xs),
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			})
+
+			local function normalize_key(key)
+				if key == nil then
+					return ""
+				end
+
+				return tostring(key)
+			end
+
+			local function normalize_value(value)
+				if value == nil then
+					return "nil"
+				end
+
+				if type(value) == "table" then
+					local parts = {}
+					for _, entry in ipairs(value) do
+						parts[#parts + 1] = tostring(entry)
+					end
+
+					return #parts > 0 and concat(parts, ", ") or "none"
+				end
+
+				return tostring(value)
+			end
+
+			local function create_stat_row(key)
+				local row_root, _, row_fill = create_field_surface(rows_holder, {
+					name = "row_" .. key,
+					size = dim2(1, 0, 0, ui_tokens.control.field_height),
+					fill_theme = "inline",
+					fill_color = themes.preset.inline,
+					outer_theme = "outline",
+					outer_radius = ui_tokens.radius.sm,
+					fill_radius = ui_tokens.radius.sm,
+					gradient = false,
+				})
+
+				local key_label = library:create("TextLabel", {
+					Parent = row_fill,
+					Name = "key",
+					FontFace = library.font,
+					TextColor3 = themes.preset.text_secondary,
+					Text = key,
+					Position = dim2(0, 8, 0, 0),
+					Size = dim2(0.45, 0, 1, 0),
+					BorderSizePixel = 0,
+					BackgroundTransparency = 1,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextYAlignment = Enum.TextYAlignment.Center,
+					TextTruncate = Enum.TextTruncate.AtEnd,
+					TextSize = ui_tokens.font.label,
+				})
+				library:apply_theme(key_label, "text_secondary", "TextColor3")
+
+				local value_label = library:create("TextLabel", {
+					Parent = row_fill,
+					Name = "value",
+					FontFace = library.font,
+					TextColor3 = themes.preset.value_text,
+					Text = "--",
+					AnchorPoint = vec2(1, 0),
+					Position = dim2(1, -8, 0, 0),
+					Size = dim2(0.55, -8, 1, 0),
+					BorderSizePixel = 0,
+					BackgroundTransparency = 1,
+					TextXAlignment = Enum.TextXAlignment.Right,
+					TextYAlignment = Enum.TextYAlignment.Center,
+					TextTruncate = Enum.TextTruncate.AtEnd,
+					TextSize = ui_tokens.font.label,
+				})
+				library:apply_theme(value_label, "value_text", "TextColor3")
+
+				local row = {
+					root = row_root,
+					key = key_label,
+					value = value_label,
+				}
+
+				function row.set(new_value)
+					value_label.Text = normalize_value(new_value)
+				end
+
+				return row
+			end
+
+			function cfg.set(key, value)
+				local normalized_key = normalize_key(key)
+				if normalized_key == "" then
+					return
+				end
+
+				local row = cfg.rows[normalized_key]
+				if not row then
+					row = create_stat_row(normalized_key)
+					cfg.rows[normalized_key] = row
+					insert(cfg.order, normalized_key)
+				end
+
+				row.set(value)
+			end
+
+			function cfg.update(values)
+				if type(values) ~= "table" then
+					return
+				end
+
+				for key, value in next, values do
+					cfg.set(key, value)
+				end
+			end
+
+			function cfg.get(key)
+				local normalized_key = normalize_key(key)
+				return cfg.rows[normalized_key]
+			end
+
+			function cfg.remove(key)
+				local normalized_key = normalize_key(key)
+				local row = cfg.rows[normalized_key]
+				if not row then
+					return
+				end
+
+				cfg.rows[normalized_key] = nil
+				for index, row_key in ipairs(cfg.order) do
+					if row_key == normalized_key then
+						remove(cfg.order, index)
+						break
+					end
+				end
+
+				if row.root then
+					row.root:Destroy()
+				end
+			end
+
+			function cfg.clear(replacement)
+				local text = replacement
+				if text == nil then
+					text = "--"
+				end
+
+				for _, key in ipairs(cfg.order) do
+					local row = cfg.rows[key]
+					if row then
+						row.set(text)
+					end
+				end
+			end
+
+			function cfg.set_title(text)
+				if not title then
+					return
+				end
+
+				local title_text = tostring(text or "")
+				if title_text == "" then
+					return
+				end
+
+				title.Text = title_text
+			end
+
+			function cfg.set_element_visible(bool)
+				stats_holder.Visible = bool
+			end
+
+			if type(options.initial) == "table" then
+				cfg.update(options.initial)
+			end
+
+			cfg.set_element_visible(cfg.visible)
+
+			return setmetatable(cfg, library)
 		end 
 
 		function library:playerlist(options) 
