@@ -1,0 +1,2899 @@
+--[[
+    AxonLib — Custom UI Library (Obsidian drop-in compatible)
+    -----------------------------------------------------------
+    Aesthetic : "Axon Hub" — categorised left sidebar, top config
+    bar, two-column groupbox content, dark-blue palette, smooth
+    TweenService animations, lucide icons.
+
+    API parity ( what `Slime RNG UI.lua` already calls ) :
+        Library:CreateWindow{ Title, Footer, Center, ... } -> Window
+        Library:Notify(text, duration)
+        Library:SetWatermark(text)        Library:SetWatermarkVisibility(bool)
+        Library:OnUnload(callback)
+        Library:Unload()
+        Library:UpdateColorsUsingRegistry()
+        Library.Scheme, Library.Toggles, Library.Options, Library.KeybindFrame
+
+        Window:AddTab(name, icon, category?)        Tab:AddLeftGroupbox(name)        Tab:AddRightGroupbox(name)
+        Groupbox:AddToggle(idx, opts)
+        Groupbox:AddSlider(idx, opts)
+        Groupbox:AddDropdown(idx, opts)
+        Groupbox:AddButton(textOrOpts, callback?)        Groupbox:AddInput(idx, opts)
+        Groupbox:AddLabel(text, doesWrap?)        Groupbox:AddDivider()
+
+        Element:OnChanged(cb), :SetValue(v), .Value (read), Label:SetText(s)
+
+    Returns the Library table. ThemeManager / SaveManager stubs are
+    exposed under `Library.ThemeManager` / `Library.SaveManager` for
+    drop-in usage.
+--]]
+
+local TweenService    = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local Players          = game:GetService("Players")
+local CoreGui          = game:GetService("CoreGui")
+local TextService      = game:GetService("TextService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ============================================================
+--  AXONHUB LOGO RESOLVER
+--  Roblox moderation gates new asset uploads behind a 24h+
+--  approval delay, which means rbxassetid:// loads return
+--  nothing during that window. getcustomasset() bypasses
+--  moderation entirely : we download the PNG once over HTTP,
+--  cache it in the executor workspace, and load it as a local
+--  texture on every subsequent run. Falls back to the asset id
+--  ( still moderated ) and finally to the "A" letter glyph
+--  drawn by the caller when neither path produces an image.
+-- ============================================================
+local AXONHUB_LOGO_LOCAL = "axonhub_logo.png"
+local AXONHUB_LOGO_URL   = "https://cdn.discordapp.com/attachments/1498401165065453598/1505246797151473717/image-removebg-preview6.png?ex=6a09edd2&is=6a089c52&hm=407a08f84d8669c197fab4307bf5eeb2416f679e72246fb45ae3c5de2edf7e1c&"
+local AXONHUB_LOGO_FALLBACK_ASSET = "rbxassetid://116597186532041"
+
+local function _httpFetch(url)
+    -- Try the executor's request() / http_request() / syn.request first.
+    local req
+    if type(request) == "function" then
+        req = request
+    elseif type(http_request) == "function" then
+        req = http_request
+    elseif type(syn) == "table" and type(syn.request) == "function" then
+        req = syn.request
+    elseif type(fluxus) == "table" and type(fluxus.request) == "function" then
+        req = fluxus.request
+    end
+    if req then
+        local ok, res = pcall(req, { Url = url, Method = "GET" })
+        if ok and res and (res.StatusCode == 200 or res.Status == 200) and res.Body then
+            return res.Body
+        end
+    end
+    -- Fallback : game:HttpGet ( works in some executors ).
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if ok and type(body) == "string" and #body > 0 then return body end
+    return nil
+end
+
+local _axonLogoResolved
+local function resolveAxonLogo()
+    if _axonLogoResolved ~= nil then return _axonLogoResolved end
+    local hasIsfile  = type(isfile) == "function"
+    local hasWrite   = type(writefile) == "function"
+    local hasCustom  = type(getcustomasset) == "function"
+    -- Already cached on disk ?
+    if hasIsfile and hasCustom and isfile(AXONHUB_LOGO_LOCAL) then
+        local ok, url = pcall(getcustomasset, AXONHUB_LOGO_LOCAL)
+        if ok and type(url) == "string" and #url > 0 then
+            _axonLogoResolved = url
+            return url
+        end
+    end
+    -- Need write + getcustomasset to fetch + load.
+    if not (hasWrite and hasCustom) then
+        _axonLogoResolved = AXONHUB_LOGO_FALLBACK_ASSET
+        return _axonLogoResolved
+    end
+    local body = _httpFetch(AXONHUB_LOGO_URL)
+    -- Verify PNG magic bytes ( 89 50 4E 47 ) so we don't cache an
+    -- HTML error page when the URL has expired.
+    if body and #body > 100 and body:sub(1, 4) == "\137PNG" then
+        local saveOk = pcall(writefile, AXONHUB_LOGO_LOCAL, body)
+        if saveOk then
+            local ok, url = pcall(getcustomasset, AXONHUB_LOGO_LOCAL)
+            if ok and type(url) == "string" and #url > 0 then
+                _axonLogoResolved = url
+                return url
+            end
+        end
+    end
+    _axonLogoResolved = AXONHUB_LOGO_FALLBACK_ASSET
+    return _axonLogoResolved
+end
+
+-- ============================================================
+--  PARENT RESOLVER ( prefer CoreGui under executors that allow it,
+--  otherwise PlayerGui — wrapped in pcall so it never throws ).
+-- ============================================================
+local function pickParent()
+    local ok, target = pcall(function()
+        if gethui then return gethui() end
+        return CoreGui
+    end)
+    if ok and target then
+        local probe = Instance.new("Folder")
+        local placed
+        local ok2 = pcall(function()
+            probe.Parent = target
+            placed = probe.Parent == target
+        end)
+        probe:Destroy()
+        if ok2 and placed then return target end
+    end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- ============================================================
+--  COLOR SCHEME ( exposed as Library.Scheme so user scripts can
+--  override before :CreateWindow ; UpdateColorsUsingRegistry()
+--  re-applies live to every registered Instance ).
+-- ============================================================
+local Scheme = {
+    -- Pure-black palette ( matches the Arvyn Hub reference ). Each
+    -- layer is just a few RGB points apart so the layout reads as
+    -- inset cards / rows on a near-black backdrop without harsh
+    -- borders.
+    BackgroundColor   = Color3.fromRGB(0, 0, 0),        -- page backdrop ( pure black )
+    SidebarColor      = Color3.fromRGB(0, 0, 0),        -- left rail
+    TopbarColor       = Color3.fromRGB(0, 0, 0),        -- top bar
+    GroupboxColor     = Color3.fromRGB(0, 0, 0),        -- card bg ( all-black, transparency does the hierarchy )
+    ElementColor      = Color3.fromRGB(18, 18, 22),     -- rows inside cards ( faint gray so they read against black )
+    HoverColor        = Color3.fromRGB(28, 28, 34),     -- hover overlay
+    -- Strokes
+    OutlineColor      = Color3.fromRGB(38, 38, 44),
+    BorderColor       = Color3.fromRGB(38, 38, 44),
+    -- Text
+    FontColor         = Color3.fromRGB(240, 244, 250),
+    DimColor          = Color3.fromRGB(110, 114, 124),
+    SubFontColor      = Color3.fromRGB(160, 165, 180),
+    -- Accents ( keep cool blue, brighter slightly to pop on black )
+    AccentColor       = Color3.fromRGB(64, 140, 255),
+    AccentHover       = Color3.fromRGB(88, 160, 255),
+    AccentSoft        = Color3.fromRGB(48, 110, 220),
+    -- Status
+    SuccessColor      = Color3.fromRGB(60, 200, 120),
+    WarnColor         = Color3.fromRGB(255, 190, 70),
+    ErrorColor        = Color3.fromRGB(255, 80, 90),
+    -- Slider fill ( picks up the theme accent on custom presets,
+    -- defaults to neutral light grey on Onyx so the bar still pops
+    -- without re-introducing a saturated blue on the default look ).
+    SliderFillColor   = Color3.fromRGB(245, 245, 250),
+}
+
+-- ============================================================
+--  LUCIDE ICON LOADER
+--  Pulls latte-soft/lucide-roblox at runtime so every Image we
+--  render uses real Lucide spritesheet rects instead of mismatched
+--  Roblox CDN ids. The library is cached under Library._Lucide so
+--  consumer scripts can call Library:GetIcon(name) too.
+--
+--  applyIcon(imgLabel, name, size?) writes Image + ImageRectOffset
+--  + ImageRectSize on an existing ImageLabel. If the network load
+--  fails ( offline executor ), we fall back to a curated short
+--  list of Roblox CDN ids so the UI still renders something.
+-- ============================================================
+local LUCIDE_URL = "https://github.com/latte-soft/lucide-roblox/releases/latest/download/lucide-roblox.luau"
+local Lucide
+do
+    local ok, mod = pcall(function()
+        return loadstring(game:HttpGet(LUCIDE_URL))()
+    end)
+    if ok and type(mod) == "table" and type(mod.GetAsset) == "function" then
+        Lucide = mod
+    end
+end
+
+-- Small alias map → preferred Lucide name. Lets the rest of the
+-- library use friendly tokens like "edit" / "chevron" without
+-- worrying about the canonical Lucide identifier.
+local IconAlias = {
+    edit       = "pencil",
+    chevron    = "chevron-down",
+    chevron_d  = "chevron-down",
+    chevron_r  = "chevron-right",
+    chevron_u  = "chevron-up",
+    chevron_l  = "chevron-left",
+    cross      = "x",
+    dots       = "more-horizontal",
+    dot        = "circle",
+    refresh    = "rotate-cw",
+    auto       = "rotate-cw",
+    bar        = "bar-chart-3",
+    stats      = "bar-chart-3",
+    bell       = "bell",
+    star       = "star",
+    play       = "play",
+    pause      = "pause",
+    plus       = "plus",
+    minus      = "minus",
+    search     = "search",
+    check      = "check",
+    info       = "info",
+    warn       = "alert-triangle",
+    err        = "x-circle",
+    success    = "check-circle-2",
+    settings   = "settings",
+    user       = "user",
+    folder     = "folder",
+    box        = "package",
+    package    = "package",
+    coin       = "coins",
+    sword      = "sword",
+    shield     = "shield",
+    home       = "home",
+    target     = "target",
+    hammer     = "hammer",
+    wrench     = "wrench",
+    cube       = "package",
+    rotate     = "rotate-ccw",
+    reroll     = "rotate-ccw",
+    automatic  = "repeat",
+    skull      = "skull",
+    sparkles   = "sparkles",
+    keybind    = "keyboard",
+    layout     = "layout-dashboard",
+    list       = "list",
+    eye        = "eye",
+    eye_off    = "eye-off",
+    download   = "download",
+    upload     = "upload",
+}
+
+-- Last-resort flat id table (only used when Lucide fails to load).
+local FallbackIcons = {
+    home      = "rbxassetid://10723407389",
+    package   = "rbxassetid://10723345845",
+    settings  = "rbxassetid://10734950309",
+    play      = "rbxassetid://10723415903",
+    edit      = "rbxassetid://10734924532",
+    search    = "rbxassetid://10747445509",
+    chevron   = "rbxassetid://10709790948",
+    check     = "rbxassetid://10709790222",
+    dots      = "rbxassetid://10734898355",
+    dot       = "rbxassetid://10723345845",
+    sword     = "rbxassetid://10734960799",
+    shield    = "rbxassetid://10734960360",
+    user      = "rbxassetid://10747384394",
+    folder    = "rbxassetid://10723408111",
+}
+
+local function resolveIconName(name)
+    if not name or name == "" then return nil end
+    name = string.lower(tostring(name)):gsub("_", "-")
+    return IconAlias[name:gsub("-", "_")] or name
+end
+
+local function applyIcon(imgLabel, name, size)
+    if not imgLabel then return end
+    local resolved = resolveIconName(name)
+    if not resolved then return end
+    if Lucide then
+        local ok, asset = pcall(Lucide.GetAsset, resolved, size or 48)
+        if ok and asset then
+            imgLabel.Image           = asset.Url
+            imgLabel.ImageRectOffset = asset.ImageRectOffset
+            imgLabel.ImageRectSize   = asset.ImageRectSize
+            return true
+        end
+    end
+    -- Fallback : flat id, no rect
+    local fb = FallbackIcons[resolved] or FallbackIcons[name and name:lower() or ""] or FallbackIcons.dot
+    imgLabel.Image           = fb or ""
+    imgLabel.ImageRectOffset = Vector2.zero
+    imgLabel.ImageRectSize   = Vector2.zero
+end
+
+-- Legacy shim retained for callsites that still expect an asset
+-- url string ( pre-Lucide ) - returns the fallback id only.
+local function iconAsset(name)
+    if not name then return nil end
+    local r = resolveIconName(name)
+    return FallbackIcons[r or ""] or FallbackIcons.dot
+end
+
+-- ============================================================
+--  TWEEN PRESETS
+-- ============================================================
+local TI_FAST = TweenInfo.new(0.12, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local TI_MED  = TweenInfo.new(0.20, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local TI_SLOW = TweenInfo.new(0.34, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+
+local function tween(inst, info, props)
+    local t = TweenService:Create(inst, info, props)
+    t:Play()
+    return t
+end
+
+-- ============================================================
+--  REGISTRY — lets us re-skin every Instance live when the user
+--  edits Library.Scheme then calls UpdateColorsUsingRegistry().
+--  Each entry is { instance, prop, schemeKey } so a single pass
+--  reapplies the new colour without recreating the UI.
+-- ============================================================
+local Registry = {}
+local function register(inst, prop, schemeKey)
+    Registry[#Registry + 1] = { inst = inst, prop = prop, key = schemeKey }
+    pcall(function() inst[prop] = Scheme[schemeKey] end)
+end
+
+-- ============================================================
+--  DOM HELPERS — verbose builders that keep element creation
+--  declarative. Every helper returns the new instance so callers
+--  can chain children easily.
+-- ============================================================
+local function corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 6)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(parent, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or Scheme.OutlineColor
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = parent
+    return s
+end
+
+local function padding(parent, all)
+    local p = Instance.new("UIPadding")
+    if type(all) == "number" then
+        p.PaddingTop    = UDim.new(0, all)
+        p.PaddingBottom = UDim.new(0, all)
+        p.PaddingLeft   = UDim.new(0, all)
+        p.PaddingRight  = UDim.new(0, all)
+    elseif type(all) == "table" then
+        p.PaddingTop    = UDim.new(0, all.t or 0)
+        p.PaddingBottom = UDim.new(0, all.b or 0)
+        p.PaddingLeft   = UDim.new(0, all.l or 0)
+        p.PaddingRight  = UDim.new(0, all.r or 0)
+    end
+    p.Parent = parent
+    return p
+end
+
+local function listLayout(parent, spacing, fill, dir)
+    local l = Instance.new("UIListLayout")
+    l.Padding = UDim.new(0, spacing or 6)
+    l.FillDirection = dir or Enum.FillDirection.Vertical
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.HorizontalAlignment = fill and Enum.HorizontalAlignment.Left or Enum.HorizontalAlignment.Left
+    l.VerticalAlignment = Enum.VerticalAlignment.Top
+    l.Parent = parent
+    return l
+end
+
+local function newFrame(name, parent, props)
+    local f = Instance.new("Frame")
+    f.Name = name
+    f.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    f.BorderSizePixel = 0
+    f.Parent = parent
+    if props then
+        for k, v in pairs(props) do f[k] = v end
+    end
+    return f
+end
+
+local function newLabel(parent, text, size, color, font, align)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Text = text or ""
+    l.TextSize = size or 14
+    l.TextColor3 = color or Scheme.FontColor
+    l.Font = font or Enum.Font.GothamMedium
+    l.TextXAlignment = align or Enum.TextXAlignment.Left
+    l.TextYAlignment = Enum.TextYAlignment.Center
+    l.Size = UDim2.new(1, 0, 1, 0)
+    l.Parent = parent
+    return l
+end
+
+-- We want the cursor to stay as the regular arrow while the user
+-- hovers our window ( Roblox's default GuiButton hover animation
+-- briefly flashes a click/finger feedback ). The MouseIcon property
+-- of TextButton is not exposed in the current Roblox API, so we
+-- instead override Mouse.Icon via MouseEnter / MouseLeave on the
+-- root frame in CreateWindow.
+local ARROW_CURSOR = "rbxasset://textures/Cursors/KeyboardMouse/ArrowFarCursor.png"
+
+local function newButton(parent, props)
+    local b = Instance.new("TextButton")
+    b.AutoButtonColor = false
+    b.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    b.BorderSizePixel = 0
+    b.Text = ""
+    b.Selectable = false
+    b.Parent = parent
+    if props then
+        for k, v in pairs(props) do b[k] = v end
+    end
+    return b
+end
+
+local function newImage(parent, image, props)
+    local i = Instance.new("ImageLabel")
+    i.BackgroundTransparency = 1
+    i.Image = image or ""
+    i.ScaleType = Enum.ScaleType.Fit
+    i.Parent = parent
+    if props then
+        for k, v in pairs(props) do i[k] = v end
+    end
+    return i
+end
+
+-- Hover state helper. Wires MouseEnter / MouseLeave to a
+-- TweenService colour swap on the supplied instance. Returns
+-- a handle with :Disconnect() so unloading is clean.
+local function bindHover(target, propName, baseKey, hoverKey)
+    local conns = {}
+    table.insert(conns, target.MouseEnter:Connect(function()
+        tween(target, TI_FAST, { [propName] = Scheme[hoverKey] })
+    end))
+    table.insert(conns, target.MouseLeave:Connect(function()
+        tween(target, TI_FAST, { [propName] = Scheme[baseKey] })
+    end))
+    return {
+        Disconnect = function()
+            for _, c in ipairs(conns) do c:Disconnect() end
+        end
+    }
+end
+
+-- ============================================================
+--  DRAGGABLE — generic drag handler bound to a "handle" Instance
+--  ( typically the topbar ) that translates input deltas into
+--  Position changes on a "frame" ( the window root ). Mirrors
+--  Obsidian's behaviour : drag locks at screen edges, clamping
+--  is left to the caller.
+-- ============================================================
+local function makeDraggable(handle, frame)
+    local dragging, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragStart = input.Position
+            startPos  = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            local d = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y
+            )
+        end
+    end)
+end
+
+-- ============================================================
+--  MAIN LIBRARY TABLE
+-- ============================================================
+local Library = {
+    Toggles      = {},
+    Options      = {},
+    Scheme       = Scheme,
+    Icons        = IconAlias,
+    _Lucide      = Lucide,
+    KeybindFrame = nil,    -- placeholder, user may assign Visible flag
+    Unloaded     = false,
+    _UnloadCBs   = {},
+    _Connections = {},
+    _ScreenGui   = nil,
+    _MainWindow  = nil,
+    _Notifications = nil,
+    _Watermark   = nil,
+    _Tabs        = {},
+}
+
+function Library:UpdateColorsUsingRegistry()
+    for _, e in ipairs(Registry) do
+        if e.inst and e.inst.Parent then
+            pcall(function() e.inst[e.prop] = Scheme[e.key] end)
+        end
+    end
+end
+
+-- ============================================================
+--  TOOLTIP  ( PC hover + mobile long-press )
+--  Library:BindTooltip(element, text) attaches a tiny floating
+--  label that follows the mouse on PC, or fades in after a
+--  0.5s touch-hold on mobile then auto-hides 2.5s later. A
+--  single tooltip frame is lazy-created under Library._ScreenGui
+--  and reused for every binding.
+-- ============================================================
+local function ensureTooltip(lib)
+    if lib._tooltip and lib._tooltip.Parent then
+        return lib._tooltip, lib._tooltipLbl
+    end
+    local sg = lib._ScreenGui
+    if not sg then return nil end
+    local t = Instance.new("Frame")
+    t.Name = "Tooltip"
+    t.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+    t.BorderSizePixel = 0
+    t.AutomaticSize = Enum.AutomaticSize.XY
+    t.ZIndex = 999
+    t.Visible = false
+    t.Parent = sg
+    corner(t, 6)
+    local ts = stroke(t, Scheme.OutlineColor, 1, 0.25)
+    register(ts, "Color", "OutlineColor")
+    padding(t, { l = 10, r = 10, t = 6, b = 6 })
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "Lbl"
+    lbl.BackgroundTransparency = 1
+    lbl.AutomaticSize = Enum.AutomaticSize.XY
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 11
+    lbl.TextColor3 = Scheme.FontColor
+    lbl.Text = ""
+    lbl.ZIndex = 1000
+    lbl.Parent = t
+    register(lbl, "TextColor3", "FontColor")
+
+    lib._tooltip = t
+    lib._tooltipLbl = lbl
+    return t, lbl
+end
+
+function Library:BindTooltip(element, text)
+    if not element or type(text) ~= "string" or text == "" then return end
+    local GuiService   = game:GetService("GuiService")
+    local UserInputSvc = game:GetService("UserInputService")
+    local insetTop     = GuiService:GetGuiInset().Y
+
+    local function place(px, py)
+        local t = self._tooltip
+        if not t then return end
+        local sz = t.AbsoluteSize
+        local vp = workspace.CurrentCamera.ViewportSize
+        local x = math.min(px + 14, vp.X - sz.X - 6)
+        local y = math.min(py + 14, vp.Y - sz.Y - 6)
+        t.Position = UDim2.fromOffset(math.max(x, 4), math.max(y, 4))
+    end
+    local function showAt(px, py)
+        local t, lbl = ensureTooltip(self)
+        if not t then return end
+        lbl.Text = text
+        t.Visible = true
+        place(px, py)
+    end
+    local function hide()
+        if self._tooltip then self._tooltip.Visible = false end
+    end
+
+    element.MouseEnter:Connect(function()
+        local m = UserInputSvc:GetMouseLocation()
+        showAt(m.X, m.Y + insetTop)
+    end)
+    element.MouseMoved:Connect(function(x, y)
+        if self._tooltip and self._tooltip.Visible then
+            place(x, y + insetTop)
+        end
+    end)
+    element.MouseLeave:Connect(hide)
+
+    -- Mobile : show after 0.5s touch-hold, auto-hide 2.5s later.
+    local holdTask
+    element.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            holdTask = task.delay(0.5, function()
+                showAt(input.Position.X, input.Position.Y)
+                task.delay(2.5, hide)
+            end)
+        end
+    end)
+    element.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            if holdTask then task.cancel(holdTask); holdTask = nil end
+        end
+    end)
+end
+
+function Library:OnUnload(cb)
+    if type(cb) == "function" then
+        table.insert(self._UnloadCBs, cb)
+    end
+end
+
+function Library:Unload()
+    if self.Unloaded then return end
+    self.Unloaded = true
+    for _, cb in ipairs(self._UnloadCBs) do
+        pcall(cb)
+    end
+    for _, c in ipairs(self._Connections) do
+        pcall(function() c:Disconnect() end)
+    end
+    if self._ScreenGui then
+        pcall(function() self._ScreenGui:Destroy() end)
+    end
+end
+
+-- ============================================================
+--  NOTIFICATION SYSTEM
+--  Top-right toast stack. Each notification animates in from
+--  the right, holds for `duration` seconds, then slides back.
+--  Multiple notifications stack vertically with smooth reflow.
+-- ============================================================
+local NotifContainer
+local _notifList = {}
+
+local function ensureNotifLayer()
+    if NotifContainer and NotifContainer.Parent then return NotifContainer end
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "ArvynLib_Notifications"
+    sg.IgnoreGuiInset = true
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.DisplayOrder = 9999
+    sg.Parent = pickParent()
+
+    local holder = newFrame("Holder", sg, {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -16, 0, 16),
+        Size = UDim2.new(0, 320, 1, -32),
+        BackgroundTransparency = 1,
+    })
+    local layout = listLayout(holder, 8)
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    layout.VerticalAlignment = Enum.VerticalAlignment.Top
+
+    NotifContainer = holder
+    return holder
+end
+
+function Library:Notify(text, duration)
+    duration = duration or 3
+    local holder = ensureNotifLayer()
+    if not holder then return end
+
+    local card = newFrame("Notif", holder, {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = Scheme.GroupboxColor,
+        BackgroundTransparency = 0.05,
+        Position = UDim2.new(1, 16, 0, 0),  -- start off-screen right
+    })
+    register(card, "BackgroundColor3", "GroupboxColor")
+    corner(card, 8)
+
+    -- Left accent bar
+    local bar = newFrame("Bar", card, {
+        Size = UDim2.new(0, 3, 1, -10),
+        Position = UDim2.new(0, 5, 0, 5),
+        BackgroundColor3 = Scheme.AccentColor,
+    })
+    register(bar, "BackgroundColor3", "AccentColor")
+    corner(bar, 2)
+
+    -- Text
+    local container = newFrame("Container", card, {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -28, 0, 0),
+        Position = UDim2.new(0, 16, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+    })
+    padding(container, { t = 10, b = 10 })
+
+    local lbl = newLabel(container, text, 14, Scheme.FontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Left)
+    lbl.Size = UDim2.new(1, 0, 0, 0)
+    lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.TextWrapped = true
+    register(lbl, "TextColor3", "FontColor")
+
+    -- Slide in
+    card.Position = UDim2.new(1, 16, 0, 0)
+    tween(card, TI_MED, { Position = UDim2.new(0, 0, 0, 0) })
+
+    table.insert(_notifList, card)
+
+    task.delay(duration, function()
+        if not card.Parent then return end
+        tween(card, TI_MED, { Position = UDim2.new(1, 16, 0, 0) })
+        task.wait(0.22)
+        if card.Parent then card:Destroy() end
+        for i, n in ipairs(_notifList) do
+            if n == card then table.remove(_notifList, i); break end
+        end
+    end)
+end
+
+-- ============================================================
+--  WATERMARK ( top-left "Axon Hub | Slime RNG" badge ).
+--  Created lazily on first call. Library:SetWatermarkVisibility
+--  toggles its parent ScreenGui.Enabled so it never renders when
+--  the user disables it.
+-- ============================================================
+local _wmGui, _wmFrame, _wmLabel
+
+local function ensureWatermark()
+    if _wmGui and _wmGui.Parent then return end
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "ArvynLib_Watermark"
+    sg.IgnoreGuiInset = true
+    sg.ResetOnSpawn = false
+    sg.DisplayOrder = 9998
+    sg.Parent = pickParent()
+    _wmGui = sg
+
+    local f = newFrame("Wm", sg, {
+        AnchorPoint = Vector2.new(0, 0),
+        Position = UDim2.new(0, 16, 0, 16),
+        Size = UDim2.new(0, 220, 0, 36),
+        BackgroundColor3 = Scheme.GroupboxColor,
+        BackgroundTransparency = 0.1,
+    })
+    register(f, "BackgroundColor3", "GroupboxColor")
+    corner(f, 8)
+
+    -- Accent dot
+    local dot = newFrame("Dot", f, {
+        Size = UDim2.new(0, 8, 0, 8),
+        Position = UDim2.new(0, 12, 0.5, -4),
+        BackgroundColor3 = Scheme.AccentColor,
+    })
+    register(dot, "BackgroundColor3", "AccentColor")
+    corner(dot, 4)
+
+    local lbl = newLabel(f, "ArvynLib", 13, Scheme.FontColor,
+        Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+    lbl.Position = UDim2.new(0, 28, 0, 0)
+    lbl.Size = UDim2.new(1, -36, 1, 0)
+    register(lbl, "TextColor3", "FontColor")
+    _wmLabel = lbl
+    _wmFrame = f
+end
+
+function Library:SetWatermark(text)
+    ensureWatermark()
+    if _wmLabel then _wmLabel.Text = tostring(text or "") end
+end
+
+function Library:SetWatermarkVisibility(state)
+    ensureWatermark()
+    if _wmGui then _wmGui.Enabled = state and true or false end
+end
+
+-- ============================================================
+--  TOGGLE FACTORY
+--  Renders a row : [icon? bar][text  ............  switch]
+--  Switch is a 36x18 pill with a sliding thumb. Click anywhere
+--  on the row toggles. Library.Toggles[idx] holds the public
+--  object exposing .Value, :SetValue, :OnChanged.
+-- ============================================================
+local function buildToggle(parent, idx, opts)
+    opts = opts or {}
+    local default  = opts.Default == true
+    local text     = opts.Text or idx
+    local tooltip  = opts.Tooltip
+    local callback = opts.Callback
+
+    local row = newFrame("Toggle_" .. idx, parent, {
+        Size = UDim2.new(1, 0, 0, 36),
+        BackgroundColor3 = Scheme.ElementColor,
+        BackgroundTransparency = 0,
+    })
+    register(row, "BackgroundColor3", "ElementColor")
+    corner(row, 7)
+    -- Subtle border to give the row definition against the card.
+    local rowStroke = stroke(row, Scheme.OutlineColor, 1, 0.7)
+    register(rowStroke, "Color", "OutlineColor")
+
+    local btn = newButton(row, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+    })
+
+    local lbl = newLabel(row, text, 13, Scheme.FontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Left)
+    lbl.Position = UDim2.new(0, 12, 0, 0)
+    lbl.Size = UDim2.new(1, -56, 1, 0)
+    register(lbl, "TextColor3", "FontColor")
+
+    -- Optional more-options dots, only attached when the caller
+    -- passes opts.OnConfig. Default toggles stay clean ( the user
+    -- explicitly asked to drop the placeholder dots ).
+    if type(opts.OnConfig) == "function" then
+        local dotsBtn = newButton(row, {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -52, 0.5, 0),
+            Size = UDim2.new(0, 22, 0, 22),
+            BackgroundTransparency = 1,
+            Text = "",
+        })
+        local dotsImg = newImage(dotsBtn, "", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(0, 16, 0, 16),
+            ImageColor3 = Scheme.DimColor,
+        })
+        applyIcon(dotsImg, "more-horizontal", 48)
+        register(dotsImg, "ImageColor3", "DimColor")
+        dotsBtn.MouseButton1Click:Connect(function() pcall(opts.OnConfig) end)
+        lbl.Size = UDim2.new(1, -88, 1, 0)
+    end
+
+    -- Pill switch
+    local pill = newFrame("Pill", row, {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        Size = UDim2.new(0, 32, 0, 18),
+        BackgroundColor3 = Scheme.ElementColor,
+    })
+    register(pill, "BackgroundColor3", "ElementColor")
+    corner(pill, 9)
+    local pillStroke = stroke(pill, Scheme.OutlineColor, 1, 0.2)
+    register(pillStroke, "Color", "OutlineColor")
+
+    local thumb = newFrame("Thumb", pill, {
+        Size = UDim2.new(0, 14, 0, 14),
+        Position = UDim2.new(0, 2, 0.5, -7),
+        BackgroundColor3 = Scheme.DimColor,
+    })
+    corner(thumb, 7)
+
+    local obj = { Value = default, _changed = {}, _idx = idx }
+
+    local function applyVisual(animated)
+        local on = obj.Value
+        local info = animated and TI_FAST or TweenInfo.new(0, Enum.EasingStyle.Linear)
+        tween(thumb, info, {
+            Position = on and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7),
+            BackgroundColor3 = on and Color3.fromRGB(255, 255, 255) or Scheme.DimColor,
+        })
+        tween(pill, info, {
+            BackgroundColor3 = on and Scheme.AccentColor or Scheme.ElementColor,
+        })
+        if on then
+            -- Re-register active pill to AccentColor so theme updates flow
+            register(pill, "BackgroundColor3", "AccentColor")
+        else
+            register(pill, "BackgroundColor3", "ElementColor")
+        end
+    end
+    applyVisual(false)
+
+    local function fire()
+        for _, cb in ipairs(obj._changed) do
+            pcall(cb, obj.Value)
+        end
+        if callback then pcall(callback, obj.Value) end
+    end
+
+    function obj:SetValue(v)
+        local nv = v and true or false
+        if nv == self.Value then return end
+        self.Value = nv
+        applyVisual(true)
+        fire()
+    end
+
+    function obj:OnChanged(cb)
+        if type(cb) == "function" then
+            table.insert(self._changed, cb)
+            pcall(cb, self.Value)
+        end
+        return self
+    end
+
+    btn.MouseButton1Click:Connect(function()
+        obj:SetValue(not obj.Value)
+    end)
+
+    -- Hover tint on the entire row
+    bindHover(row, "BackgroundColor3", "ElementColor", "HoverColor")
+
+    if type(opts.Tooltip) == "string" and opts.Tooltip ~= "" then
+        Library:BindTooltip(row, opts.Tooltip)
+    end
+
+    Library.Toggles[idx] = obj
+    return obj
+end
+
+-- ============================================================
+--  SLIDER FACTORY
+--  Two-row layout : [text   value]  +  [progress bar].
+--  Drag the bar OR click anywhere on it to set the value.
+--  Snaps to `Rounding` ( 0 = integers, 1 = .1, 2 = .01, etc. )
+-- ============================================================
+local function buildSlider(parent, idx, opts)
+    opts = opts or {}
+    local minV = opts.Min or 0
+    local maxV = opts.Max or 100
+    local rounding = opts.Rounding or 0
+    local default = opts.Default or minV
+    local suffix = opts.Suffix or ""
+    local text = opts.Text or idx
+    local callback = opts.Callback
+
+    local row = newFrame("Slider_" .. idx, parent, {
+        Size = UDim2.new(1, 0, 0, 50),
+        BackgroundColor3 = Scheme.ElementColor,
+        BackgroundTransparency = 0,
+    })
+    register(row, "BackgroundColor3", "ElementColor")
+    corner(row, 7)
+    local rowStroke = stroke(row, Scheme.OutlineColor, 1, 0.7)
+    register(rowStroke, "Color", "OutlineColor")
+    padding(row, { l = 14, r = 14, t = 8, b = 10 })
+
+    -- ===== Header : label on the left, current value (bold) + dim
+    -- "/ max" hint on the right. RichText keeps the layout tight.
+    local lbl = newLabel(row, text, 12, Scheme.SubFontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Left)
+    lbl.Size = UDim2.new(0.55, 0, 0, 14)
+    lbl.Position = UDim2.new(0, 0, 0, 0)
+    register(lbl, "TextColor3", "SubFontColor")
+
+    local function formatVal(v)
+        local sep = (suffix ~= "" and suffix:sub(1, 1):match("%S")) and " " or ""
+        local cur = tostring(v) .. sep .. suffix
+        local maxStr = tostring(maxV) .. sep .. suffix
+        return string.format(
+            "<font color=\"#FFFFFF\"><b>%s</b></font><font color=\"#6E727C\">  /  %s</font>",
+            cur, maxStr
+        )
+    end
+    local valLbl = newLabel(row, "", 12, Scheme.FontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Right)
+    valLbl.AnchorPoint = Vector2.new(1, 0)
+    valLbl.Position = UDim2.new(1, 0, 0, 0)
+    valLbl.Size = UDim2.new(0.45, 0, 0, 14)
+    valLbl.RichText = true
+    valLbl.Text = formatVal(default)
+    register(valLbl, "TextColor3", "FontColor")
+
+    -- ===== Track : full-width 4px pill at the bottom of the row.
+    -- A wider invisible hit-area sits on top so the user can grab
+    -- the thumb easily even though the track itself is thin.
+    local trackHost = newFrame("TrackHost", row, {
+        Size     = UDim2.new(1, 0, 0, 18),
+        Position = UDim2.new(0, 0, 1, -18),
+        BackgroundTransparency = 1,
+    })
+    local track = newFrame("Track", trackHost, {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position    = UDim2.new(0, 0, 0.5, 0),
+        Size        = UDim2.new(1, 0, 0, 4),
+        BackgroundColor3 = Scheme.BackgroundColor,
+        BackgroundTransparency = 0.2,
+    })
+    register(track, "BackgroundColor3", "BackgroundColor")
+    corner(track, 2)
+    track.ClipsDescendants = false
+
+    -- Fill : a single solid colour pulled from Scheme.SliderFillColor
+    -- so the bar always matches the active theme. Onyx ships with a
+    -- light grey for the premium look, custom themes route their
+    -- AccentColor here so the fill reads as the theme accent.
+    local fill = newFrame("Fill", track, {
+        Size = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = Scheme.SliderFillColor,
+    })
+    register(fill, "BackgroundColor3", "SliderFillColor")
+    corner(fill, 2)
+
+    -- Thumb : 14×14 white circle riding the right edge of the fill,
+    -- with a soft glow halo behind it for the premium feel.
+    local thumb = Instance.new("Frame")
+    thumb.Name = "Thumb"
+    thumb.AnchorPoint = Vector2.new(0.5, 0.5)
+    thumb.Position = UDim2.new(0, 0, 0.5, 0)
+    thumb.Size = UDim2.new(0, 14, 0, 14)
+    thumb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    thumb.BorderSizePixel = 0
+    thumb.ZIndex = 5
+    thumb.Parent = trackHost
+    corner(thumb, 8)
+    local thumbStroke = Instance.new("UIStroke")
+    thumbStroke.Color = Color3.fromRGB(120, 124, 134)
+    thumbStroke.Thickness = 1
+    thumbStroke.Transparency = 0.4
+    thumbStroke.Parent = thumb
+
+    local thumbHalo = Instance.new("ImageLabel")
+    thumbHalo.Name = "Halo"
+    thumbHalo.BackgroundTransparency = 1
+    thumbHalo.AnchorPoint = Vector2.new(0.5, 0.5)
+    thumbHalo.Position = UDim2.new(0.5, 0, 0.5, 0)
+    thumbHalo.Size = UDim2.new(0, 32, 0, 32)
+    thumbHalo.Image = "rbxassetid://6014261993"   -- soft radial glow
+    thumbHalo.ImageColor3 = Color3.fromRGB(255, 255, 255)
+    thumbHalo.ImageTransparency = 1   -- hidden until drag
+    thumbHalo.ScaleType = Enum.ScaleType.Slice
+    thumbHalo.SliceCenter = Rect.new(49, 49, 450, 450)
+    thumbHalo.ZIndex = 4
+    thumbHalo.Parent = thumb
+
+    local function roundTo(v, r)
+        local mult = 10 ^ (r or 0)
+        return math.floor(v * mult + 0.5) / mult
+    end
+
+    local obj = { Value = default, _changed = {}, _idx = idx }
+
+    local TI_VAL = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local function setVisual(v, animated)
+        local pct = (v - minV) / math.max(maxV - minV, 1e-9)
+        pct = math.clamp(pct, 0, 1)
+        local info = animated and TI_VAL or TweenInfo.new(0, Enum.EasingStyle.Linear)
+        tween(fill,  info, { Size     = UDim2.new(pct, 0, 1, 0) })
+        tween(thumb, info, { Position = UDim2.new(pct, 0, 0.5, 0) })
+        valLbl.Text = formatVal(v)
+    end
+    setVisual(default, false)
+
+    local function setFromAlpha(alpha, fire)
+        alpha = math.clamp(alpha, 0, 1)
+        local v = roundTo(minV + (maxV - minV) * alpha, rounding)
+        if v == obj.Value and not fire then return end
+        obj.Value = v
+        setVisual(v, true)
+        if fire then
+            for _, cb in ipairs(obj._changed) do pcall(cb, v) end
+            if callback then pcall(callback, v) end
+        end
+    end
+
+    function obj:SetValue(v)
+        v = roundTo(math.clamp(v, minV, maxV), rounding)
+        if v == self.Value then return end
+        self.Value = v
+        setVisual(v, true)
+        for _, cb in ipairs(self._changed) do pcall(cb, v) end
+        if callback then pcall(callback, v) end
+    end
+
+    function obj:OnChanged(cb)
+        if type(cb) == "function" then
+            table.insert(self._changed, cb)
+            pcall(cb, self.Value)
+        end
+        return self
+    end
+
+    -- Drag handling : the whole trackHost ( 18px tall ) is the
+    -- hit-area, so the thin 4px visual track is still easy to grab.
+    local hit = newButton(trackHost, {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0),
+        Text = "",
+    })
+    local dragging = false
+    local TI_THUMB = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+    hit.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            -- Keep the thumb at its idle size on click ( the user
+            -- explicitly asked for no big / blurry pressed state ).
+            -- Only the stroke darkens to signal the press.
+            tween(thumbStroke, TI_THUMB, { Transparency = 0.15 })
+            local rel = (input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1)
+            setFromAlpha(rel, true)
+        end
+    end)
+    hit.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            tween(thumbStroke, TI_THUMB, { Transparency = 0.4 })
+        end
+    end)
+    hit.MouseEnter:Connect(function()
+        if not dragging then
+            tween(thumb, TI_THUMB, { Size = UDim2.new(0, 16, 0, 16) })
+        end
+    end)
+    hit.MouseLeave:Connect(function()
+        if not dragging then
+            tween(thumb, TI_THUMB, { Size = UDim2.new(0, 14, 0, 14) })
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            local rel = (input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1)
+            setFromAlpha(rel, true)
+        end
+    end)
+
+    if type(opts.Tooltip) == "string" and opts.Tooltip ~= "" then
+        Library:BindTooltip(row, opts.Tooltip)
+    end
+
+    Library.Options[idx] = obj
+    return obj
+end
+
+-- ============================================================
+--  BUTTON FACTORY
+--  Solid accent-coloured button. Two call signatures :
+--      :AddButton("Text", function() end)
+--      :AddButton({ Text = "", Func = function() end, Tooltip? })
+-- ============================================================
+local function buildButton(parent, arg, cb)
+    local opts
+    if type(arg) == "table" then
+        opts = arg
+    else
+        opts = { Text = arg, Func = cb }
+    end
+    local text = opts.Text or "Button"
+    local fn = opts.Func or opts.Callback or function() end
+
+    -- Dark-gray button to match the black/gray UI theme. The accent
+    -- blue only flashes briefly when pressed, otherwise the button
+    -- stays in the ElementColor family ( hover -> HoverColor ).
+    local row = newFrame("Button", parent, {
+        Size = UDim2.new(1, 0, 0, 34),
+        BackgroundColor3 = Scheme.ElementColor,
+    })
+    register(row, "BackgroundColor3", "ElementColor")
+    corner(row, 8)
+
+    local btn = newButton(row, {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0),
+        Text = "",
+    })
+
+    local lbl = newLabel(row, text, 13, Scheme.FontColor,
+        Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    register(lbl, "TextColor3", "FontColor")
+
+    btn.MouseButton1Click:Connect(function()
+        tween(row, TI_FAST, { BackgroundColor3 = Scheme.AccentColor })
+        task.delay(0.12, function()
+            tween(row, TI_FAST, { BackgroundColor3 = Scheme.ElementColor })
+        end)
+        pcall(fn)
+    end)
+
+    bindHover(row, "BackgroundColor3", "ElementColor", "HoverColor")
+
+    if opts and type(opts.Tooltip) == "string" and opts.Tooltip ~= "" then
+        Library:BindTooltip(row, opts.Tooltip)
+    end
+
+    return {
+        SetText = function(_, t) lbl.Text = tostring(t) end,
+    }
+end
+
+-- ============================================================
+--  LABEL FACTORY ( supports doesWrap + :SetText ).
+-- ============================================================
+local function buildLabel(parent, text, doesWrap)
+    local row = newFrame("Label", parent, {
+        Size = UDim2.new(1, 0, 0, doesWrap and 0 or 22),
+        BackgroundTransparency = 1,
+        AutomaticSize = doesWrap and Enum.AutomaticSize.Y or Enum.AutomaticSize.None,
+    })
+    local lbl = newLabel(row, text, 12, Scheme.SubFontColor,
+        Enum.Font.Gotham, Enum.TextXAlignment.Left)
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    if doesWrap then
+        lbl.TextWrapped = true
+        lbl.AutomaticSize = Enum.AutomaticSize.Y
+    end
+    register(lbl, "TextColor3", "SubFontColor")
+    return {
+        SetText = function(_, t) lbl.Text = tostring(t or "") end,
+    }
+end
+
+-- ============================================================
+--  DIVIDER ( 1px line with Outline colour ).
+-- ============================================================
+local function buildDivider(parent)
+    local div = newFrame("Divider", parent, {
+        Size = UDim2.new(1, 0, 0, 1),
+        BackgroundColor3 = Scheme.OutlineColor,
+        BackgroundTransparency = 0.4,
+    })
+    register(div, "BackgroundColor3", "OutlineColor")
+    return { _div = div }
+end
+
+-- ============================================================
+--  GROUPBOX ( title above + rounded element card )
+--  Layout matches the Arvyn Hub reference : a small uppercase
+--  dim label sits OUTSIDE the rounded card, then the card holds
+--  a vertical list of elements with internal padding. Wrapper is
+--  an autosizing frame so columns flow nicely.
+-- ============================================================
+local function buildGroupbox(parent, name)
+    -- Outer wrapper hosting [ title ] + [ card ]
+    local wrap = newFrame("Groupbox", parent, {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+    })
+    local wrapLayout = listLayout(wrap, 6)
+    wrapLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    -- Section title ( uppercase, dim, sits ABOVE the card )
+    local titleHolder = newFrame("Title", wrap, {
+        Size = UDim2.new(1, 0, 0, 18),
+        BackgroundTransparency = 1,
+        LayoutOrder = 1,
+    })
+    padding(titleHolder, { l = 4 })
+    local titleLbl = newLabel(titleHolder, name or "", 12, Scheme.DimColor,
+        Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+    titleLbl.Text = name or ""
+    register(titleLbl, "TextColor3", "DimColor")
+
+    -- Rounded card hosting elements. We deliberately skip a UIStroke
+    -- here : the strong border was making the UI look unfinished.
+    -- Instead we rely on the GroupboxColor differential against the
+    -- backdrop + a faint translucency to give the card a clean
+    -- "frosted" look.
+    local card = newFrame("Card", wrap, {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = Scheme.GroupboxColor,
+        BackgroundTransparency = 0.1,
+        LayoutOrder = 2,
+        ZIndex = 2,
+    })
+    register(card, "BackgroundColor3", "GroupboxColor")
+    corner(card, 10)
+    -- Faint outline so the card has a defined edge against the page
+    -- ( the user asked for "des traits gris qui font beau" ).
+    local cardStroke = stroke(card, Scheme.OutlineColor, 1, 0.7)
+    register(cardStroke, "Color", "OutlineColor")
+    padding(card, { t = 10, b = 10, l = 10, r = 10 })
+
+    -- Subtle gradient on each card so they read with a hint of
+    -- depth against the page backdrop.
+    local cardGrad = Instance.new("UIGradient")
+    cardGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,    Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(1,    Color3.fromRGB(210, 210, 215)),
+    })
+    cardGrad.Rotation = 90
+    cardGrad.Parent = card
+
+    -- Element holder ( where rows are appended )
+    local body = newFrame("Body", card, {
+        Size = UDim2.new(1, 0, 0, 0),
+        BackgroundTransparency = 1,
+        AutomaticSize = Enum.AutomaticSize.Y,
+    })
+    local layout = listLayout(body, 4)
+
+    local g = { _body = body, _card = card, _title = titleLbl, _wrap = wrap }
+
+    function g:AddToggle(idx, opts)   return buildToggle(self._body, idx, opts) end
+    function g:AddSlider(idx, opts)   return buildSlider(self._body, idx, opts) end
+    function g:AddButton(arg, cb)     return buildButton(self._body, arg, cb)   end
+    function g:AddLabel(text, wrap)   return buildLabel(self._body, text, wrap) end
+    function g:AddDivider()           return buildDivider(self._body)           end
+
+    -- Dropdown / Input are loaded lazily ( defined in Chunk 2 ).
+    -- We attach pass-through stubs now and overwrite when the
+    -- second chunk attaches itself. Library._BuildDropdown /
+    -- Library._BuildInput hooks are populated by Chunk 2.
+    function g:AddDropdown(idx, opts)
+        if Library._BuildDropdown then
+            return Library._BuildDropdown(self._body, idx, opts)
+        end
+        return buildLabel(self._body, "[Dropdown not loaded]")
+    end
+    function g:AddInput(idx, opts)
+        if Library._BuildInput then
+            return Library._BuildInput(self._body, idx, opts)
+        end
+        return buildLabel(self._body, "[Input not loaded]")
+    end
+
+    return g
+end
+
+-- ============================================================
+--  TAB FACTORY
+--  Each tab owns :
+--    * A sidebar entry ( clickable row in the left rail )
+--    * A content frame ( shown when active, hidden otherwise )
+--      with two scrollable columns hosting groupboxes
+-- ============================================================
+local function buildTab(window, name, icon, category)
+    local sidebar = window._Sidebar
+    local pages   = window._Pages
+
+    -- Resolve category slot ( header LO = slot*100, tabs LO = slot*100 + n )
+    local catKey = category or "_default"
+    local cat    = sidebar._CatSeen[catKey]
+    if not cat then
+        sidebar._CatCount = sidebar._CatCount + 1
+        cat = { slot = sidebar._CatCount, tabCount = 0 }
+        sidebar._CatSeen[catKey] = cat
+    end
+    cat.tabCount = cat.tabCount + 1
+
+    -- ===== Sidebar entry =====
+    local entry = newFrame("Entry_" .. name, sidebar._Holder, {
+        Size = UDim2.new(1, 0, 0, 32),
+        BackgroundColor3 = Scheme.SidebarColor,
+        BackgroundTransparency = 1,
+        LayoutOrder = cat.slot * 100 + cat.tabCount,
+    })
+    corner(entry, 6)
+
+    local entryBtn = newButton(entry, {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 1, 0),
+        Text = "",
+    })
+
+    local accent = newFrame("Accent", entry, {
+        Size = UDim2.new(0, 3, 0.6, 0),
+        Position = UDim2.new(0, 0, 0.2, 0),
+        BackgroundColor3 = Scheme.AccentColor,
+        BackgroundTransparency = 1,  -- hidden until selected
+    })
+    register(accent, "BackgroundColor3", "AccentColor")
+    corner(accent, 2)
+
+    -- Refs are stored in a Lua table because Roblox Instances reject
+    -- arbitrary property assignments ( e.g. `entry._Icon = img` would
+    -- throw "_Icon is not a valid member of Frame" ).
+    local entryRefs = {
+        _Frame  = entry,
+        _Accent = accent,
+        _Icon   = nil,
+        _Label  = nil,
+    }
+
+    if icon then
+        local img = newImage(entry, "", {
+            Size = UDim2.new(0, 18, 0, 18),
+            Position = UDim2.new(0, 12, 0.5, -9),
+            ImageColor3 = Scheme.SubFontColor,
+        })
+        applyIcon(img, icon, 48)
+        register(img, "ImageColor3", "SubFontColor")
+        entryRefs._Icon = img
+    end
+
+    local entryLbl = newLabel(entry, name, 13, Scheme.SubFontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Left)
+    entryLbl.Position = UDim2.new(0, icon and 38 or 14, 0, 0)
+    entryLbl.Size = UDim2.new(1, -40, 1, 0)
+    register(entryLbl, "TextColor3", "SubFontColor")
+    entryRefs._Label = entryLbl
+
+    -- ===== Content page =====
+    -- Using a CanvasGroup ( not Frame ) so we can tween a single
+    -- GroupTransparency across all descendants. This powers the
+    -- fade-in / fade-out crossfade between tabs in _SelectTab.
+    local page = Instance.new("CanvasGroup")
+    page.Name = "Page_" .. name
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.GroupTransparency = 0
+    page.Visible = false
+    page.Parent = pages
+
+    -- Two scrollable columns
+    local function makeCol(side)
+        local sf = Instance.new("ScrollingFrame")
+        sf.Name = "Col_" .. side
+        sf.BackgroundTransparency = 1
+        sf.BorderSizePixel = 0
+        sf.ScrollBarThickness = 3
+        sf.ScrollBarImageColor3 = Scheme.AccentColor
+        register(sf, "ScrollBarImageColor3", "AccentColor")
+        sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        sf.CanvasSize = UDim2.new(0, 0, 0, 0)
+        sf.ScrollingDirection = Enum.ScrollingDirection.Y
+        sf.Size = UDim2.new(0.5, -8, 1, 0)
+        sf.Position = side == "Left" and UDim2.new(0, 0, 0, 0)
+            or UDim2.new(0.5, 8, 0, 0)
+        sf.Parent = page
+
+        local body = newFrame("Body", sf, {
+            Size = UDim2.new(1, -6, 0, 0),
+            BackgroundTransparency = 1,
+            AutomaticSize = Enum.AutomaticSize.Y,
+        })
+        local lyt = listLayout(body, 12)
+
+        -- Roblox SFs with AutomaticCanvasSize sometimes drift to a
+        -- non-zero CanvasPosition when child content is appended.
+        -- Snap back to the top while elements are being added so the
+        -- user always sees the page from row #1. After 1.5 s the
+        -- snapping releases and the user has free scroll control.
+        local startedAt = os.clock()
+        local conn
+        conn = lyt:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            sf.CanvasPosition = Vector2.zero
+            if os.clock() - startedAt > 1.5 then
+                if conn then conn:Disconnect() conn = nil end
+            end
+        end)
+
+        return body
+    end
+    local leftCol  = makeCol("Left")
+    local rightCol = makeCol("Right")
+
+    local tab = {
+        _Name = name,
+        _Entry = entryRefs,
+        _Page = page,
+        _LeftCol = leftCol,
+        _RightCol = rightCol,
+    }
+
+    function tab:AddLeftGroupbox(label)
+        return buildGroupbox(self._LeftCol, label)
+    end
+    function tab:AddRightGroupbox(label)
+        return buildGroupbox(self._RightCol, label)
+    end
+
+    -- Activate handler ( delegated to window:_SelectTab )
+    entryBtn.MouseButton1Click:Connect(function()
+        window:_SelectTab(name)
+    end)
+
+    -- Hover effect on idle entries
+    entryBtn.MouseEnter:Connect(function()
+        if window._ActiveTab ~= name then
+            tween(entry, TI_FAST, { BackgroundTransparency = 0.7 })
+            tween(entry, TI_FAST, { BackgroundColor3 = Scheme.HoverColor })
+        end
+    end)
+    entryBtn.MouseLeave:Connect(function()
+        if window._ActiveTab ~= name then
+            tween(entry, TI_FAST, { BackgroundTransparency = 1 })
+        end
+    end)
+
+    -- Categorise : on first tab of this category, prepend a header
+    if category and cat.tabCount == 1 then
+        local hdr = newFrame("Cat_" .. category, sidebar._Holder, {
+            Size = UDim2.new(1, 0, 0, 24),
+            BackgroundTransparency = 1,
+            LayoutOrder = cat.slot * 100,  -- header just above its tabs
+        })
+        local hl = newLabel(hdr, string.upper(category), 11,
+            Scheme.DimColor, Enum.Font.GothamBold,
+            Enum.TextXAlignment.Left)
+        hl.Position = UDim2.new(0, 8, 0, 6)
+        hl.Size = UDim2.new(1, -8, 0, 14)
+        register(hl, "TextColor3", "DimColor")
+    end
+
+    table.insert(window._Tabs, tab)
+    Library._Tabs[name] = tab
+    return tab
+end
+
+-- ============================================================
+--  WINDOW FACTORY ( Library:CreateWindow main entry )
+--  Builds the entire shell : ScreenGui -> Root -> Sidebar +
+--  Topbar + Pages region. Returns a Window object exposing
+--  :AddTab() and a private :_SelectTab() switch helper.
+-- ============================================================
+function Library:CreateWindow(opts)
+    opts = opts or {}
+    local title  = opts.Title or "AXON HUB"
+    local footer = opts.Footer  -- nil triggers async game-name resolve below
+    local size   = opts.Size or UDim2.fromOffset(720, 480)
+    local center = opts.Center ~= false
+
+    -- ===== ScreenGui root =====
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "ArvynLib_Window"
+    sg.IgnoreGuiInset = true
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.DisplayOrder = 9990
+    sg.Parent = pickParent()
+    self._ScreenGui = sg
+
+    -- ===== Backdrop ( the actual window box ) =====
+    -- Active = true is critical : it makes the frame consume mouse
+    -- input so clicks don't bleed through to camera control. Without
+    -- it, clicking a toggle could be interpreted as a world click,
+    -- causing the cursor to vanish into camera-rotate mode.
+    --
+    -- Slight BackgroundTransparency + vertical UIGradient give the
+    -- window a subtle "frosted glass" feel rather than a flat black
+    -- rectangle.
+    local root = newFrame("Root", sg, {
+        Size = size,
+        Position = center and UDim2.new(0.5, 0, 0.5, 0) or UDim2.new(0, 50, 0, 50),
+        AnchorPoint = center and Vector2.new(0.5, 0.5) or Vector2.new(0, 0),
+        BackgroundColor3 = Scheme.BackgroundColor,
+        BackgroundTransparency = 0.05,
+        Active = true,
+    })
+    register(root, "BackgroundColor3", "BackgroundColor")
+    corner(root, 14)
+    local rs = stroke(root, Scheme.OutlineColor, 1, 0.7)
+    register(rs, "Color", "OutlineColor")
+    -- Subtle top-to-bottom shading : top is slightly brighter than
+    -- the bottom, mimicking a frosted glass surface.
+    local rootGrad = Instance.new("UIGradient")
+    rootGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,    Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(1,    Color3.fromRGB(195, 195, 200)),
+    })
+    rootGrad.Rotation = 90
+    rootGrad.Parent = root
+    self._MainWindow = root
+
+    -- ===== Sidebar ( left rail ) =====
+    local sidebar = newFrame("Sidebar", root, {
+        Size = UDim2.new(0, 200, 1, 0),
+        BackgroundColor3 = Scheme.SidebarColor,
+        BackgroundTransparency = 0.15,
+    })
+    register(sidebar, "BackgroundColor3", "SidebarColor")
+    corner(sidebar, 12)
+    -- Cover right rounded corners so the sidebar joins flush with content
+    local cover = newFrame("Cover", sidebar, {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, 0),
+        Size = UDim2.new(0, 12, 1, 0),
+        BackgroundColor3 = Scheme.SidebarColor,
+    })
+    register(cover, "BackgroundColor3", "SidebarColor")
+    -- Right divider line
+    local divLine = newFrame("DivLine", sidebar, {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, 0),
+        Size = UDim2.new(0, 1, 1, 0),
+        BackgroundColor3 = Scheme.OutlineColor,
+        BackgroundTransparency = 0.4,
+    })
+    register(divLine, "BackgroundColor3", "OutlineColor")
+
+    -- Logo block at top of sidebar
+    local logo = newFrame("Logo", sidebar, {
+        Size = UDim2.new(1, 0, 0, 56),
+        BackgroundTransparency = 1,
+    })
+    local logoIcon = newFrame("LogoIcon", logo, {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 12, 0.5, 0),
+        Size = UDim2.new(0, 44, 0, 44),
+        BackgroundColor3 = Scheme.ElementColor,
+    })
+    register(logoIcon, "BackgroundColor3", "ElementColor")
+    corner(logoIcon, 8)
+
+    -- Logo icon : opts.Icon dispatches to :
+    --   * "game"            -> Roblox game icon ( rbxthumb )
+    --   * "<lucide-name>"   -> a Lucide line icon centred on the box
+    --   * "rbxassetid://X"  -> any Roblox asset id ( image / decal )
+    --   * nil               -> default AxonHub logo asset
+    local DEFAULT_LOGO_ASSET = resolveAxonLogo()
+    logoIcon.BackgroundTransparency = 1
+    if opts.Icon == "game" then
+        local gameImg = Instance.new("ImageLabel")
+        gameImg.Name = "GameIcon"
+        gameImg.BackgroundTransparency = 1
+        gameImg.BorderSizePixel = 0
+        gameImg.AnchorPoint = Vector2.new(0.5, 0.5)
+        gameImg.Position = UDim2.new(0.5, 0, 0.5, 0)
+        gameImg.Size = UDim2.new(1, 0, 1, 0)
+        gameImg.Image = "rbxthumb://type=GameIcon&id=" .. tostring(game.PlaceId) .. "&w=150&h=150"
+        gameImg.ScaleType = Enum.ScaleType.Fit
+        gameImg.Parent = logoIcon
+        corner(gameImg, 6)
+    elseif type(opts.Icon) == "string" and opts.Icon:sub(1, 4) ~= "rbxa" and opts.Icon ~= "" and opts.Icon ~= "axon" then
+        local play = newImage(logoIcon, "", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(0, 18, 0, 18),
+            ImageColor3 = Color3.fromRGB(255, 255, 255),
+        })
+        applyIcon(play, opts.Icon, 48)
+    else
+        local logoImg = Instance.new("ImageLabel")
+        logoImg.Name = "LogoImg"
+        logoImg.BackgroundTransparency = 1
+        logoImg.BorderSizePixel = 0
+        logoImg.AnchorPoint = Vector2.new(0.5, 0.5)
+        logoImg.Position = UDim2.new(0.5, 0, 0.5, 0)
+        logoImg.Size = UDim2.new(1, 0, 1, 0)
+        logoImg.Image = (type(opts.Icon) == "string" and opts.Icon ~= "") and opts.Icon or DEFAULT_LOGO_ASSET
+        logoImg.ScaleType = Enum.ScaleType.Fit
+        logoImg.ZIndex = 2
+        logoImg.Parent = logoIcon
+
+        -- Fallback "A" letter shown while the asset loads ( or
+        -- permanently if the asset is moderation-pending / private ).
+        local fallback = Instance.new("TextLabel")
+        fallback.Name = "AFallback"
+        fallback.BackgroundTransparency = 1
+        fallback.Size = UDim2.new(1, 0, 1, 0)
+        fallback.Position = UDim2.new(0, 0, 0, -1)
+        fallback.Text = "A"
+        fallback.Font = Enum.Font.GothamBlack
+        fallback.TextSize = 24
+        fallback.TextColor3 = Color3.fromRGB(235, 235, 240)
+        fallback.ZIndex = 1
+        fallback.Parent = logoIcon
+
+        -- Hide the fallback as soon as the real image renders.
+        -- IsLoaded under-reports for getcustomasset textures, so we
+        -- also treat "rbxasset://textures/..." paths as visible.
+        local function syncFallback()
+            local img = logoImg.Image or ""
+            local isLocal = img:sub(1, 19) == "rbxasset://textures"
+            fallback.Visible = not (logoImg.IsLoaded or isLocal)
+        end
+        syncFallback()
+        logoImg:GetPropertyChangedSignal("IsLoaded"):Connect(syncFallback)
+        task.delay(2, syncFallback)
+    end
+
+    local titleLbl = newLabel(logo, title, 14, Scheme.FontColor,
+        Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+    titleLbl.Position = UDim2.new(0, 68, 0, 12)
+    titleLbl.Size = UDim2.new(1, -76, 0, 16)
+    register(titleLbl, "TextColor3", "FontColor")
+
+    -- Sub-label : if the caller didn't pass a Footer, async-resolve
+    -- the Roblox game name via MarketplaceService and inject it as
+    -- soon as the request comes back. We also strip leading [tag]
+    -- prefixes ( "[🍀2x Chance🍀] Foo" -> "Foo" ) because the emoji
+    -- chars don't render in Gotham.
+    if footer ~= "" then
+        local initial = footer or "..."
+        local subLbl = newLabel(logo, initial, 11, Scheme.DimColor,
+            Enum.Font.Gotham, Enum.TextXAlignment.Left)
+        subLbl.Position = UDim2.new(0, 68, 0, 30)
+        subLbl.Size = UDim2.new(1, -76, 0, 14)
+        subLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        register(subLbl, "TextColor3", "DimColor")
+        if footer == nil then
+            task.spawn(function()
+                local ok, info = pcall(function()
+                    return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+                end)
+                if ok and info and info.Name and subLbl and subLbl.Parent then
+                    local clean = info.Name
+                    -- Strip every leading "[..]" group + surrounding spaces.
+                    while true do
+                        local next = clean:gsub("^%s*%[[^%]]*%]%s*", "")
+                        if next == clean then break end
+                        clean = next
+                    end
+                    clean = clean:gsub("^%s+", ""):gsub("%s+$", "")
+                    if clean ~= "" then subLbl.Text = clean end
+                end
+            end)
+        end
+    end
+
+    -- Sidebar tab list ( categorised ).
+    local sbHolder = newFrame("Tabs", sidebar, {
+        Position = UDim2.new(0, 0, 0, 64),
+        Size = UDim2.new(1, 0, 1, -120),
+        BackgroundTransparency = 1,
+    })
+    padding(sbHolder, { l = 8, r = 8, t = 4, b = 4 })
+    local sbLayout = listLayout(sbHolder, 4)
+
+    -- Profile card at bottom of sidebar
+    local profile = newFrame("Profile", sidebar, {
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 8, 1, -8),
+        Size = UDim2.new(1, -16, 0, 48),
+        BackgroundColor3 = Scheme.GroupboxColor,
+        BackgroundTransparency = 0.1,
+    })
+    register(profile, "BackgroundColor3", "GroupboxColor")
+    corner(profile, 8)
+    -- Real player avatar headshot via Roblox's rbxthumb : protocol
+    -- ( no GetUserThumbnailAsync HTTP roundtrip needed, the client
+    -- resolves it locally ).
+    local pIcon = Instance.new("ImageLabel")
+    pIcon.Name = "PIcon"
+    pIcon.AnchorPoint = Vector2.new(0, 0.5)
+    pIcon.Position = UDim2.new(0, 8, 0.5, 0)
+    pIcon.Size = UDim2.new(0, 32, 0, 32)
+    pIcon.BackgroundColor3 = Scheme.ElementColor
+    pIcon.BackgroundTransparency = 0
+    pIcon.BorderSizePixel = 0
+    pIcon.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=150&h=150"
+    pIcon.ScaleType = Enum.ScaleType.Crop
+    pIcon.Parent = profile
+    corner(pIcon, 16)
+    register(pIcon, "BackgroundColor3", "ElementColor")
+
+    local pName = newLabel(profile, LocalPlayer.DisplayName or LocalPlayer.Name or "User", 12,
+        Scheme.FontColor, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+    pName.Position = UDim2.new(0, 48, 0, 6)
+    pName.Size = UDim2.new(1, -78, 0, 14)
+    pName.TextTruncate = Enum.TextTruncate.AtEnd
+    register(pName, "TextColor3", "FontColor")
+    local pSub = newLabel(profile, "AxonHub - Free", 10,
+        Scheme.DimColor, Enum.Font.Gotham, Enum.TextXAlignment.Left)
+    pSub.Position = UDim2.new(0, 48, 0, 22)
+    pSub.Size = UDim2.new(1, -78, 0, 14)
+    pSub.TextTruncate = Enum.TextTruncate.AtEnd
+    register(pSub, "TextColor3", "DimColor")
+
+    -- Chevron pointing right ( matches the Arvyn Hub reference ).
+    -- Purely decorative for now, future hooks can expose a click.
+    local pChev = newImage(profile, "", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -8, 0.5, 0),
+        Size = UDim2.new(0, 14, 0, 14),
+        ImageColor3 = Scheme.DimColor,
+    })
+    applyIcon(pChev, "chevron-right", 48)
+    register(pChev, "ImageColor3", "DimColor")
+
+    -- ===== Topbar ( title + drag handle + close button ) =====
+    local topbar = newFrame("Topbar", root, {
+        Position = UDim2.new(0, 200, 0, 0),
+        Size = UDim2.new(1, -200, 0, 56),
+        BackgroundColor3 = Scheme.TopbarColor,
+        BackgroundTransparency = 0.15,
+    })
+    register(topbar, "BackgroundColor3", "TopbarColor")
+    -- Bottom border
+    local tbBorder = newFrame("Border", topbar, {
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 0, 1, 0),
+        Size = UDim2.new(1, 0, 0, 1),
+        BackgroundColor3 = Scheme.OutlineColor,
+        BackgroundTransparency = 0.4,
+    })
+    register(tbBorder, "BackgroundColor3", "OutlineColor")
+
+    -- Topbar config indicator removed ( user request ). Config
+    -- switching is handled exclusively from the UI Settings tab,
+    -- so the read-only "Default" pill is no longer drawn here.
+
+    -- Live FPS + ping readout in the top right of the topbar.
+    -- Replaces the previous blue AxonHub badge ( user asked for no
+    -- blue accents in the chrome ). Wordmark stays in plain dim text.
+    local statsLbl = newLabel(topbar, "Axon Hub  |  FPS: --  |  Ping: --ms", 12,
+        Scheme.SubFontColor, Enum.Font.GothamMedium, Enum.TextXAlignment.Right)
+    statsLbl.AnchorPoint = Vector2.new(1, 0.5)
+    statsLbl.Position = UDim2.new(1, -52, 0.5, 0)
+    statsLbl.Size = UDim2.new(0, 240, 0, 20)
+    register(statsLbl, "TextColor3", "SubFontColor")
+
+    -- Drive the stats with a Heartbeat loop ; FPS computed from
+    -- frame time, ping fetched from the local Player network info.
+    do
+        local frames, accum = 0, 0
+        local fps = 0
+        local Stats = game:GetService("Stats")
+        local function getPing()
+            local ok, v = pcall(function()
+                return LocalPlayer:GetNetworkPing() * 1000
+            end)
+            if ok and type(v) == "number" then return math.floor(v) end
+            local ok2, v2 = pcall(function()
+                return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+            end)
+            if ok2 and type(v2) == "number" then return math.floor(v2) end
+            return 0
+        end
+        local conn
+        conn = RunService.Heartbeat:Connect(function(dt)
+            frames = frames + 1
+            accum  = accum + dt
+            if accum >= 0.5 then
+                fps   = math.floor(frames / accum + 0.5)
+                frames = 0
+                accum  = 0
+                if statsLbl and statsLbl.Parent then
+                    statsLbl.Text = string.format("Axon Hub  |  FPS: %d  |  Ping: %dms", fps, getPing())
+                else
+                    -- Stop the loop if the GUI was unloaded.
+                    if conn then conn:Disconnect() conn = nil end
+                end
+            end
+        end)
+    end
+
+    -- Right side : close button. Uses a real Lucide "x" icon
+    -- because the Unicode ✕ glyph mis-renders as "âœ•" mojibake on
+    -- some Roblox font fallback paths.
+    local closeBtn = newButton(topbar, {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -16, 0.5, 0),
+        Size = UDim2.new(0, 28, 0, 28),
+        BackgroundColor3 = Scheme.ElementColor,
+        BackgroundTransparency = 0.3,
+        Text = "",
+    })
+    register(closeBtn, "BackgroundColor3", "ElementColor")
+    corner(closeBtn, 6)
+    local closeIcon = newImage(closeBtn, "", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.new(0, 14, 0, 14),
+        ImageColor3 = Scheme.SubFontColor,
+    })
+    applyIcon(closeIcon, "x", 48)
+    register(closeIcon, "ImageColor3", "SubFontColor")
+    closeBtn.MouseButton1Click:Connect(function()
+        Library:Unload()
+    end)
+    bindHover(closeBtn, "BackgroundColor3", "ElementColor", "HoverColor")
+
+    -- ===== Pages region ( holds tab content ) =====
+    local pages = newFrame("Pages", root, {
+        Position = UDim2.new(0, 200, 0, 56),
+        Size = UDim2.new(1, -200, 1, -56),
+        BackgroundTransparency = 1,
+    })
+    padding(pages, { t = 16, b = 16, l = 16, r = 16 })
+
+    -- Drag handle = topbar
+    makeDraggable(topbar, root)
+
+    -- Sidebar object ( category bookkeeping )
+    local sidebarObj = {
+        _Holder   = sbHolder,
+        _CatSeen  = {},
+        _CatCount = 0,
+    }
+
+    -- ===== Window object =====
+    local window = {
+        _Root      = root,
+        _Sidebar   = sidebarObj,
+        _Pages     = pages,
+        _Tabs      = {},
+        _ActiveTab = nil,
+    }
+
+    function window:_SelectTab(name)
+        local TI_TAB_IN  = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+        local TI_TAB_OUT = TweenInfo.new(0.14, Enum.EasingStyle.Quad,  Enum.EasingDirection.Out)
+        for _, t in ipairs(self._Tabs) do
+            local on = t._Name == name
+            local frame = t._Entry._Frame
+
+            if on then
+                -- Reset scroll + slide / fade the new page in
+                for _, c in ipairs(t._Page:GetChildren()) do
+                    if c:IsA("ScrollingFrame") then
+                        c.CanvasPosition = Vector2.zero
+                    end
+                end
+                t._Page.Visible = true
+                t._Page.Position = UDim2.new(0, 12, 0, 0)
+                t._Page.GroupTransparency = 1
+                tween(t._Page, TI_TAB_IN, {
+                    Position = UDim2.new(0, 0, 0, 0),
+                    GroupTransparency = 0,
+                })
+            elseif t._Page.Visible then
+                -- Fade out the previously active page, hide once invisible.
+                local oldPage = t._Page
+                tween(oldPage, TI_TAB_OUT, { GroupTransparency = 1 })
+                task.delay(0.16, function()
+                    if self._ActiveTab ~= t._Name and oldPage and oldPage.Parent then
+                        oldPage.Visible = false
+                    end
+                end)
+            end
+            tween(frame, TI_FAST, {
+                BackgroundColor3 = on and Scheme.ElementColor or Scheme.SidebarColor,
+                BackgroundTransparency = on and 0.2 or 1,
+            })
+            tween(t._Entry._Accent, TI_FAST, {
+                BackgroundTransparency = on and 0 or 1,
+            })
+            tween(t._Entry._Label, TI_FAST, {
+                TextColor3 = on and Scheme.FontColor or Scheme.SubFontColor,
+            })
+            if t._Entry._Icon then
+                tween(t._Entry._Icon, TI_FAST, {
+                    ImageColor3 = on and Scheme.AccentColor or Scheme.SubFontColor,
+                })
+            end
+            if on then
+                register(frame, "BackgroundColor3", "ElementColor")
+                register(t._Entry._Label, "TextColor3", "FontColor")
+                if t._Entry._Icon then
+                    register(t._Entry._Icon, "ImageColor3", "AccentColor")
+                end
+            else
+                register(frame, "BackgroundColor3", "SidebarColor")
+                register(t._Entry._Label, "TextColor3", "SubFontColor")
+                if t._Entry._Icon then
+                    register(t._Entry._Icon, "ImageColor3", "SubFontColor")
+                end
+            end
+        end
+        self._ActiveTab = name
+    end
+
+    function window:AddTab(name, icon, category)
+        local t = buildTab(self, name, icon, category)
+        if not self._ActiveTab then
+            self:_SelectTab(name)
+        end
+        return t
+    end
+
+    return window
+end
+
+-- ============================================================
+--  POPUP MANAGER ( one popup open at a time + click-outside )
+--  Used by dropdowns and the topbar config button. Anchored to
+--  the same ScreenGui as the originating row so DisplayOrder is
+--  inherited automatically.
+-- ============================================================
+local _activePopup = nil
+local function setActivePopup(handle)
+    if _activePopup and _activePopup ~= handle and _activePopup.close then
+        pcall(_activePopup.close)
+    end
+    _activePopup = handle
+end
+local function clearActivePopup(handle)
+    if _activePopup == handle then _activePopup = nil end
+end
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if not _activePopup or not _activePopup.frame or not _activePopup.frame.Parent then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1
+       and input.UserInputType ~= Enum.UserInputType.Touch then return end
+    -- Defer so the same click doesn't immediately close the popup
+    task.defer(function()
+        local h = _activePopup
+        if not h or not h.frame or not h.frame.Parent then return end
+        local pos, sz = h.frame.AbsolutePosition, h.frame.AbsoluteSize
+        local mp = input.Position
+        if mp.X < pos.X or mp.X > pos.X + sz.X
+           or mp.Y < pos.Y or mp.Y > pos.Y + sz.Y then
+            -- Also check the anchor row, so clicking the row again toggles
+            local a = h.anchor
+            if a then
+                local apos, asz = a.AbsolutePosition, a.AbsoluteSize
+                if mp.X >= apos.X and mp.X <= apos.X + asz.X
+                   and mp.Y >= apos.Y and mp.Y <= apos.Y + asz.Y then
+                    return -- the row's own click handler will toggle
+                end
+            end
+            pcall(h.close)
+        end
+    end)
+end)
+
+-- ============================================================
+--  DROPDOWN FACTORY ( single + multi + search )
+--  Visual : row [ label ........ value ▾ ] in card body. Click
+--  spawns a popup parented to the host ScreenGui so it can
+--  overlay any other element. Search filter on top, hover row
+--  highlight, soft accent on selected entries.
+--
+--  opts = {
+--      Text       = "Mode",
+--      Values     = { "A", "B", "C" },
+--      Default    = "A"  or  { A = true, C = true } / { "A", "C" },
+--      Multi      = false,        -- multi-select mode
+--      Searchable = true,         -- search box at top of popup
+--      Callback   = function(v) end,
+--      AllowNull  = true,         -- single mode allows nil
+--  }
+-- ============================================================
+local function buildDropdown(parent, idx, opts)
+    opts = opts or {}
+    local text       = opts.Text or idx
+    local values     = opts.Values or {}
+    local multi      = opts.Multi == true
+    local searchable = opts.Searchable ~= false
+    local callback   = opts.Callback
+    local allowNull  = opts.AllowNull ~= false
+
+    -- Normalise default
+    local function normaliseDefault(d)
+        if multi then
+            local out = {}
+            if type(d) == "table" then
+                if next(d) then
+                    -- list-form vs set-form
+                    if d[1] ~= nil then
+                        for _, v in ipairs(d) do out[v] = true end
+                    else
+                        for k, v in pairs(d) do
+                            if v == true and type(k) == "string" then
+                                out[k] = true
+                            end
+                        end
+                    end
+                end
+            end
+            return out
+        else
+            if type(d) == "string" then return d end
+            if type(d) == "table" and d[1] then return d[1] end
+            return nil
+        end
+    end
+
+    local row = newFrame("Dropdown_" .. tostring(idx), parent, {
+        Size = UDim2.new(1, 0, 0, 36),
+        BackgroundColor3 = Scheme.ElementColor,
+        BackgroundTransparency = 0,
+    })
+    register(row, "BackgroundColor3", "ElementColor")
+    corner(row, 7)
+    local rowStroke = stroke(row, Scheme.OutlineColor, 1, 0.7)
+    register(rowStroke, "Color", "OutlineColor")
+    padding(row, { l = 12, r = 10 })
+
+    local btn = newButton(row, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+    })
+
+    local lbl = newLabel(row, text, 13, Scheme.FontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Left)
+    lbl.Size = UDim2.new(0.4, 0, 1, 0)
+    register(lbl, "TextColor3", "FontColor")
+
+    -- Optional more-options dots ( hidden unless opts.OnConfig set,
+    -- because dropdowns already get a chevron on the right ).
+    local dotsBtn
+    if type(opts.OnConfig) == "function" then
+        dotsBtn = newButton(row, {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -38, 0.5, 0),
+            Size = UDim2.new(0, 22, 0, 22),
+            BackgroundTransparency = 1,
+            Text = "",
+        })
+        local di = newImage(dotsBtn, "", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(0, 16, 0, 16),
+            ImageColor3 = Scheme.DimColor,
+        })
+        applyIcon(di, "more-horizontal", 48)
+        register(di, "ImageColor3", "DimColor")
+        dotsBtn.MouseButton1Click:Connect(function() pcall(opts.OnConfig) end)
+    end
+
+    local valLbl = newLabel(row, "---", 13, Scheme.SubFontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Right)
+    valLbl.AnchorPoint = Vector2.new(1, 0.5)
+    valLbl.Position = UDim2.new(1, -22, 0.5, 0)
+    valLbl.Size = UDim2.new(0.6, dotsBtn and -56 or -28, 1, 0)
+    valLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    register(valLbl, "TextColor3", "SubFontColor")
+
+    local chev = newImage(row, "", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.new(0, 14, 0, 14),
+        ImageColor3 = Scheme.SubFontColor,
+    })
+    applyIcon(chev, "chevron-down", 48)
+    register(chev, "ImageColor3", "SubFontColor")
+
+    local obj = {
+        Value    = normaliseDefault(opts.Default),
+        Values   = values,
+        _changed = {},
+        _idx     = idx,
+        _multi   = multi,
+    }
+
+    local function fmtValue()
+        if multi then
+            local parts = {}
+            for v, b in pairs(obj.Value) do
+                if b then table.insert(parts, v) end
+            end
+            if #parts == 0 then return "None" end
+            if #parts > 3 then return ("%d selected"):format(#parts) end
+            return table.concat(parts, ", ")
+        else
+            return obj.Value or "---"
+        end
+    end
+
+    local function refreshValueLabel()
+        valLbl.Text = fmtValue()
+    end
+    refreshValueLabel()
+
+    -- ===== Popup =====
+    local popup, popupRows, searchBox
+    local popupHandle = {}
+
+    local function destroyPopup()
+        if popup then
+            tween(popup, TI_FAST, { BackgroundTransparency = 1 })
+            local p = popup
+            task.delay(0.13, function() if p then p:Destroy() end end)
+            popup = nil
+            popupRows = nil
+            searchBox = nil
+        end
+        clearActivePopup(popupHandle)
+        tween(chev, TI_FAST, { Rotation = 0 })
+    end
+    popupHandle.close = destroyPopup
+    popupHandle.anchor = row
+
+    local function buildPopup()
+        local sg = row:FindFirstAncestorWhichIsA("ScreenGui")
+        if not sg then return end
+
+        -- Geometry
+        local rowPos  = row.AbsolutePosition
+        local rowSz   = row.AbsoluteSize
+        local guiAbs  = sg.AbsolutePosition
+
+        local rowCount = math.min(#values, 6)
+        local rowH     = 28
+        local searchH  = searchable and 32 or 0
+        local pad      = 8
+        local spacing  = 4
+        local totalH   = pad * 2 + searchH + (searchable and spacing or 0) + (rowH * rowCount) + (math.max(rowCount - 1, 0) * spacing)
+
+        popup = newFrame("Popup_" .. tostring(idx), sg, {
+            Position = UDim2.fromOffset(rowPos.X - guiAbs.X, rowPos.Y - guiAbs.Y + rowSz.Y + 4),
+            Size     = UDim2.fromOffset(rowSz.X, totalH),
+            BackgroundColor3 = Scheme.GroupboxColor,
+            BackgroundTransparency = 0,
+            ZIndex = 50,
+        })
+        register(popup, "BackgroundColor3", "GroupboxColor")
+        corner(popup, 10)
+        local s = stroke(popup, Scheme.OutlineColor, 1, 0.4)
+        register(s, "Color", "OutlineColor")
+        padding(popup, { t = pad, b = pad, l = pad, r = pad })
+
+        -- Inner scroll list
+        local list = Instance.new("ScrollingFrame")
+        list.BackgroundTransparency = 1
+        list.BorderSizePixel = 0
+        list.ScrollBarThickness = 3
+        list.ScrollBarImageColor3 = Scheme.AccentColor
+        register(list, "ScrollBarImageColor3", "AccentColor")
+        list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        list.CanvasSize = UDim2.new(0, 0, 0, 0)
+        list.Size = UDim2.new(1, 0, 1, -(searchable and (searchH + spacing) or 0))
+        list.Position = UDim2.new(0, 0, 0, searchable and (searchH + spacing) or 0)
+        list.Parent = popup
+        list.ZIndex = 51
+        local listLayoutObj = listLayout(list, spacing)
+
+        -- Search box ( on top ). Note : we DON'T use UIPadding on
+        -- the box because that would also shift the icon child.
+        -- Instead we hand-position both the icon and the textbox.
+        local searchText = ""
+        if searchable then
+            local box = newFrame("Search", popup, {
+                Size = UDim2.new(1, 0, 0, searchH),
+                BackgroundColor3 = Scheme.ElementColor,
+                BackgroundTransparency = 0.2,
+                ZIndex = 51,
+            })
+            register(box, "BackgroundColor3", "ElementColor")
+            corner(box, 6)
+            local searchIcon = newImage(box, "", {
+                AnchorPoint = Vector2.new(0, 0.5),
+                Position = UDim2.new(0, 10, 0.5, 0),
+                Size = UDim2.new(0, 14, 0, 14),
+                ImageColor3 = Scheme.SubFontColor,
+                ZIndex = 52,
+            })
+            applyIcon(searchIcon, "search", 48)
+            register(searchIcon, "ImageColor3", "SubFontColor")
+            local tb = Instance.new("TextBox")
+            tb.BackgroundTransparency = 1
+            tb.PlaceholderText = "Search..."
+            tb.PlaceholderColor3 = Scheme.DimColor
+            tb.TextColor3 = Scheme.FontColor
+            tb.TextSize = 13
+            tb.Font = Enum.Font.Gotham
+            tb.TextXAlignment = Enum.TextXAlignment.Left
+            tb.ClearTextOnFocus = false
+            tb.Text = ""
+            tb.Position = UDim2.new(0, 30, 0, 0)
+            tb.Size = UDim2.new(1, -36, 1, 0)
+            tb.ZIndex = 52
+            tb.Parent = box
+            register(tb, "TextColor3", "FontColor")
+            searchBox = tb
+            tb:GetPropertyChangedSignal("Text"):Connect(function()
+                searchText = string.lower(tb.Text or "")
+                for v, ent in pairs(popupRows) do
+                    local match = searchText == "" or string.find(string.lower(v), searchText, 1, true)
+                    ent.frame.Visible = match and true or false
+                end
+            end)
+        end
+
+        popupRows = {}
+        for i, v in ipairs(values) do
+            local entry = newFrame("Opt_" .. tostring(i), list, {
+                Size = UDim2.new(1, -4, 0, rowH),
+                BackgroundColor3 = Scheme.ElementColor,
+                BackgroundTransparency = 0.6,
+                ZIndex = 51,
+            })
+            corner(entry, 5)
+            padding(entry, { l = 8, r = 8 })
+            local entryBtn = newButton(entry, {
+                Size = UDim2.new(1, 0, 1, 0),
+                BackgroundTransparency = 1,
+                Text = "",
+            })
+            entryBtn.ZIndex = 52
+            local optLbl = newLabel(entry, v, 12, Scheme.SubFontColor,
+                Enum.Font.GothamMedium, Enum.TextXAlignment.Left)
+            optLbl.ZIndex = 52
+            optLbl.Size = UDim2.new(1, -22, 1, 0)
+            -- Selected marker on right ( accent dot )
+            local mark = newFrame("Mark", entry, {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, 0, 0.5, 0),
+                Size = UDim2.new(0, 8, 0, 8),
+                BackgroundColor3 = Scheme.AccentColor,
+                BackgroundTransparency = 1,
+                ZIndex = 52,
+            })
+            corner(mark, 4)
+            register(mark, "BackgroundColor3", "AccentColor")
+
+            local function refreshSelectedVisual()
+                local on
+                if multi then on = obj.Value[v] == true
+                else on = obj.Value == v end
+                tween(optLbl, TI_FAST, { TextColor3 = on and Scheme.FontColor or Scheme.SubFontColor })
+                tween(mark,   TI_FAST, { BackgroundTransparency = on and 0 or 1 })
+                tween(entry,  TI_FAST, { BackgroundTransparency = on and 0.3 or 0.6 })
+            end
+            refreshSelectedVisual()
+
+            entryBtn.MouseEnter:Connect(function()
+                tween(entry, TI_FAST, { BackgroundColor3 = Scheme.HoverColor })
+            end)
+            entryBtn.MouseLeave:Connect(function()
+                tween(entry, TI_FAST, { BackgroundColor3 = Scheme.ElementColor })
+            end)
+            entryBtn.MouseButton1Click:Connect(function()
+                if multi then
+                    obj.Value[v] = not obj.Value[v] or nil
+                    if obj.Value[v] == false then obj.Value[v] = nil end
+                    refreshSelectedVisual()
+                    refreshValueLabel()
+                    for _, cb in ipairs(obj._changed) do pcall(cb, obj.Value) end
+                    if callback then pcall(callback, obj.Value) end
+                else
+                    obj.Value = v
+                    for kk, ent in pairs(popupRows) do ent.refresh() end
+                    refreshValueLabel()
+                    for _, cb in ipairs(obj._changed) do pcall(cb, obj.Value) end
+                    if callback then pcall(callback, obj.Value) end
+                    destroyPopup()
+                end
+            end)
+
+            popupRows[v] = { frame = entry, refresh = refreshSelectedVisual }
+        end
+
+        -- Slide-in animation
+        popup.Size = UDim2.fromOffset(rowSz.X, 0)
+        tween(popup, TI_MED, { Size = UDim2.fromOffset(rowSz.X, totalH) })
+        tween(chev, TI_FAST, { Rotation = 180 })
+
+        popupHandle.frame = popup
+        setActivePopup(popupHandle)
+    end
+
+    btn.MouseButton1Click:Connect(function()
+        if popup then destroyPopup() else buildPopup() end
+    end)
+
+    bindHover(row, "BackgroundColor3", "ElementColor", "HoverColor")
+
+    function obj:SetValue(v)
+        if multi then
+            obj.Value = normaliseDefault(v)
+        else
+            obj.Value = v
+        end
+        refreshValueLabel()
+        if popupRows then
+            for _, e in pairs(popupRows) do e.refresh() end
+        end
+        for _, cb in ipairs(self._changed) do pcall(cb, obj.Value) end
+        if callback then pcall(callback, obj.Value) end
+    end
+
+    function obj:SetValues(newValues)
+        values = newValues or {}
+        obj.Values = values
+        if popup then destroyPopup() end
+    end
+
+    function obj:OnChanged(cb)
+        if type(cb) == "function" then
+            table.insert(self._changed, cb)
+            pcall(cb, self.Value)
+        end
+        return self
+    end
+
+    if type(opts.Tooltip) == "string" and opts.Tooltip ~= "" then
+        Library:BindTooltip(row, opts.Tooltip)
+    end
+
+    Library.Options[idx] = obj
+    return obj
+end
+
+-- ============================================================
+--  INPUT FACTORY ( single-line text field )
+--  opts = { Text, Default, Placeholder, Numeric, MaxLength, Callback }
+-- ============================================================
+local function buildInput(parent, idx, opts)
+    opts = opts or {}
+    local text        = opts.Text or idx
+    local default     = opts.Default or ""
+    local placeholder = opts.Placeholder or ""
+    local numeric     = opts.Numeric == true
+    local maxLen      = opts.MaxLength
+    local callback    = opts.Callback
+
+    local row = newFrame("Input_" .. tostring(idx), parent, {
+        Size = UDim2.new(1, 0, 0, 36),
+        BackgroundColor3 = Scheme.ElementColor,
+        BackgroundTransparency = 0,
+    })
+    register(row, "BackgroundColor3", "ElementColor")
+    corner(row, 7)
+    local rowStroke = stroke(row, Scheme.OutlineColor, 1, 0.7)
+    register(rowStroke, "Color", "OutlineColor")
+    padding(row, { l = 12, r = 10 })
+
+    local lbl = newLabel(row, text, 13, Scheme.FontColor,
+        Enum.Font.GothamMedium, Enum.TextXAlignment.Left)
+    lbl.Size = UDim2.new(0.4, 0, 1, 0)
+    register(lbl, "TextColor3", "FontColor")
+
+    local field = newFrame("Field", row, {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.new(0.6, -8, 0, 24),
+        BackgroundColor3 = Scheme.BackgroundColor,
+        BackgroundTransparency = 0.3,
+    })
+    register(field, "BackgroundColor3", "BackgroundColor")
+    corner(field, 5)
+    padding(field, { l = 8, r = 8 })
+
+    local tb = Instance.new("TextBox")
+    tb.BackgroundTransparency = 1
+    tb.Text = tostring(default)
+    tb.PlaceholderText = placeholder
+    tb.PlaceholderColor3 = Scheme.DimColor
+    tb.TextColor3 = Scheme.FontColor
+    tb.TextSize = 12
+    tb.Font = Enum.Font.Gotham
+    tb.TextXAlignment = Enum.TextXAlignment.Left
+    tb.ClearTextOnFocus = false
+    tb.Size = UDim2.new(1, 0, 1, 0)
+    tb.Parent = field
+    register(tb, "TextColor3", "FontColor")
+
+    local obj = { Value = tostring(default), _changed = {}, _idx = idx }
+
+    local function commit(s)
+        if numeric then
+            s = (s or ""):gsub("[^%-%d%.]", "")
+        end
+        if maxLen then s = s:sub(1, maxLen) end
+        if s ~= obj.Value then
+            obj.Value = s
+            for _, cb in ipairs(obj._changed) do pcall(cb, s) end
+            if callback then pcall(callback, s) end
+        end
+        if tb.Text ~= s then tb.Text = s end
+    end
+
+    tb.FocusLost:Connect(function() commit(tb.Text) end)
+    tb:GetPropertyChangedSignal("Text"):Connect(function()
+        if maxLen and #tb.Text > maxLen then
+            tb.Text = tb.Text:sub(1, maxLen)
+        end
+    end)
+
+    function obj:SetValue(v) commit(tostring(v or "")) end
+    function obj:OnChanged(cb)
+        if type(cb) == "function" then
+            table.insert(self._changed, cb)
+            pcall(cb, self.Value)
+        end
+        return self
+    end
+
+    if type(opts.Tooltip) == "string" and opts.Tooltip ~= "" then
+        Library:BindTooltip(row, opts.Tooltip)
+    end
+
+    Library.Options[idx] = obj
+    return obj
+end
+
+-- Wire factories into the lazy-loaded slots used by groupbox.
+Library._BuildDropdown = buildDropdown
+Library._BuildInput    = buildInput
+
+-- KeybindFrame stub : a hidden frame Slime RNG UI references
+-- via Library.KeybindFrame.Visible = false. We expose a real
+-- Frame Instance so property writes don't error.
+do
+    local kbGui = Instance.new("ScreenGui")
+    kbGui.Name = "ArvynLib_Keybinds"
+    kbGui.IgnoreGuiInset = true
+    kbGui.ResetOnSpawn = false
+    kbGui.Enabled = false
+    kbGui.Parent = pickParent()
+    local f = Instance.new("Frame")
+    f.Name = "KeybindFrame"
+    f.BackgroundTransparency = 1
+    f.Size = UDim2.fromOffset(200, 100)
+    f.Visible = false
+    f.Parent = kbGui
+    Library.KeybindFrame = f
+end
+
+-- ============================================================
+--  THEME MANAGER  ( minimal, drop-in compatible )
+--  Adds a "Theme" section to the configured tab letting the
+--  user toggle a small set of named presets that re-skin the
+--  Library.Scheme palette and re-runs UpdateColorsUsingRegistry.
+-- ============================================================
+local ThemeManager = { _lib = Library, _folder = "ArvynLib", _presets = {} }
+
+-- 5 polished presets covering the most common dark-UI moods :
+--   Onyx     -> neutral pure black + cool blue accent ( default )
+--   Midnight -> deep navy / indigo + electric cyan
+--   Crimson  -> blackened wine + bright red
+--   Emerald  -> charcoal + neon green
+--   Violet   -> deep purple-black + electric purple ( matches logo )
+-- Each preset re-skins every relevant Scheme key so the look is
+-- fully cohesive, not just an accent swap.
+
+ThemeManager._presets["Onyx"] = {
+    BackgroundColor = Color3.fromRGB(0, 0, 0),
+    SidebarColor    = Color3.fromRGB(0, 0, 0),
+    TopbarColor     = Color3.fromRGB(0, 0, 0),
+    GroupboxColor   = Color3.fromRGB(0, 0, 0),
+    ElementColor    = Color3.fromRGB(18, 18, 22),
+    HoverColor      = Color3.fromRGB(28, 28, 34),
+    OutlineColor    = Color3.fromRGB(38, 38, 44),
+    BorderColor     = Color3.fromRGB(38, 38, 44),
+    FontColor       = Color3.fromRGB(240, 244, 250),
+    DimColor        = Color3.fromRGB(110, 114, 124),
+    SubFontColor    = Color3.fromRGB(160, 165, 180),
+    AccentColor     = Color3.fromRGB(64, 140, 255),
+    AccentHover     = Color3.fromRGB(88, 160, 255),
+    AccentSoft      = Color3.fromRGB(48, 110, 220),
+    SliderFillColor = Color3.fromRGB(245, 245, 250),
+}
+
+ThemeManager._presets["Midnight"] = {
+    BackgroundColor = Color3.fromRGB(6, 9, 20),
+    SidebarColor    = Color3.fromRGB(4, 6, 14),
+    TopbarColor     = Color3.fromRGB(6, 9, 20),
+    GroupboxColor   = Color3.fromRGB(8, 12, 24),
+    ElementColor    = Color3.fromRGB(18, 24, 42),
+    HoverColor      = Color3.fromRGB(28, 36, 60),
+    OutlineColor    = Color3.fromRGB(44, 56, 86),
+    BorderColor     = Color3.fromRGB(44, 56, 86),
+    FontColor       = Color3.fromRGB(232, 242, 255),
+    DimColor        = Color3.fromRGB(110, 130, 165),
+    SubFontColor    = Color3.fromRGB(170, 188, 220),
+    AccentColor     = Color3.fromRGB(0, 220, 255),
+    AccentHover     = Color3.fromRGB(60, 235, 255),
+    AccentSoft      = Color3.fromRGB(0, 170, 215),
+    SliderFillColor = Color3.fromRGB(0, 220, 255),
+}
+
+ThemeManager._presets["Crimson"] = {
+    BackgroundColor = Color3.fromRGB(12, 4, 6),
+    SidebarColor    = Color3.fromRGB(8, 2, 3),
+    TopbarColor     = Color3.fromRGB(12, 4, 6),
+    GroupboxColor   = Color3.fromRGB(14, 5, 7),
+    ElementColor    = Color3.fromRGB(30, 12, 16),
+    HoverColor      = Color3.fromRGB(46, 20, 26),
+    OutlineColor    = Color3.fromRGB(70, 28, 36),
+    BorderColor     = Color3.fromRGB(70, 28, 36),
+    FontColor       = Color3.fromRGB(252, 236, 240),
+    DimColor        = Color3.fromRGB(150, 105, 115),
+    SubFontColor    = Color3.fromRGB(200, 155, 168),
+    AccentColor     = Color3.fromRGB(255, 70, 90),
+    AccentHover     = Color3.fromRGB(255, 110, 130),
+    AccentSoft      = Color3.fromRGB(210, 45, 65),
+    SliderFillColor = Color3.fromRGB(255, 70, 90),
+}
+
+ThemeManager._presets["Emerald"] = {
+    BackgroundColor = Color3.fromRGB(4, 10, 6),
+    SidebarColor    = Color3.fromRGB(2, 6, 4),
+    TopbarColor     = Color3.fromRGB(4, 10, 6),
+    GroupboxColor   = Color3.fromRGB(5, 12, 8),
+    ElementColor    = Color3.fromRGB(14, 24, 18),
+    HoverColor      = Color3.fromRGB(20, 36, 26),
+    OutlineColor    = Color3.fromRGB(36, 56, 42),
+    BorderColor     = Color3.fromRGB(36, 56, 42),
+    FontColor       = Color3.fromRGB(235, 250, 240),
+    DimColor        = Color3.fromRGB(110, 140, 120),
+    SubFontColor    = Color3.fromRGB(170, 200, 180),
+    AccentColor     = Color3.fromRGB(0, 235, 145),
+    AccentHover     = Color3.fromRGB(60, 250, 170),
+    AccentSoft      = Color3.fromRGB(0, 195, 120),
+    SliderFillColor = Color3.fromRGB(0, 235, 145),
+}
+
+ThemeManager._presets["Violet"] = {
+    BackgroundColor = Color3.fromRGB(10, 5, 18),
+    SidebarColor    = Color3.fromRGB(6, 2, 12),
+    TopbarColor     = Color3.fromRGB(10, 5, 18),
+    GroupboxColor   = Color3.fromRGB(12, 6, 20),
+    ElementColor    = Color3.fromRGB(24, 14, 36),
+    HoverColor      = Color3.fromRGB(36, 22, 54),
+    OutlineColor    = Color3.fromRGB(58, 38, 82),
+    BorderColor     = Color3.fromRGB(58, 38, 82),
+    FontColor       = Color3.fromRGB(246, 236, 255),
+    DimColor        = Color3.fromRGB(135, 115, 158),
+    SubFontColor    = Color3.fromRGB(190, 168, 218),
+    AccentColor     = Color3.fromRGB(170, 80, 255),
+    AccentHover     = Color3.fromRGB(195, 115, 255),
+    AccentSoft      = Color3.fromRGB(140, 55, 220),
+    SliderFillColor = Color3.fromRGB(170, 80, 255),
+}
+
+function ThemeManager:SetLibrary(lib) self._lib = lib end
+function ThemeManager:SetFolder(folder) self._folder = folder end
+
+function ThemeManager:ApplyPreset(name)
+    local p = self._presets[name]
+    if not p then return end
+    for k, v in pairs(p) do
+        if Scheme[k] ~= nil then Scheme[k] = v end
+    end
+    pcall(function() self._lib:UpdateColorsUsingRegistry() end)
+end
+
+-- Curated display order — keep the neutral default first, then
+-- bright accents from cool to warm so the dropdown reads as a
+-- moodboard rather than an alphabetical dump.
+local THEME_ORDER = { "Onyx", "Midnight", "Emerald", "Crimson", "Violet" }
+
+function ThemeManager:ApplyToTab(tab)
+    if not tab or not tab.AddLeftGroupbox then return end
+    local gb = tab:AddLeftGroupbox("Theme")
+    local presetNames = {}
+    local seen = {}
+    for _, name in ipairs(THEME_ORDER) do
+        if self._presets[name] then
+            table.insert(presetNames, name)
+            seen[name] = true
+        end
+    end
+    -- Append any extra presets users may have registered.
+    for k in pairs(self._presets) do
+        if not seen[k] then table.insert(presetNames, k) end
+    end
+    gb:AddDropdown("ThemePreset", {
+        Text     = "Preset",
+        Values   = presetNames,
+        Default  = presetNames[1] or "Onyx",
+        Multi    = false,
+        Tooltip  = "Re-skin chaque élément de l'UI ( fond, accents, texte ) en direct.",
+        Callback = function(v) ThemeManager:ApplyPreset(v) end,
+    })
+    gb:AddLabel("Switch presets to re-skin the entire UI live.", true)
+end
+
+Library.ThemeManager = ThemeManager
+
+-- ============================================================
+--  SAVE MANAGER  ( minimal, drop-in compatible )
+--  Persists Toggles / Options to executor disk via writefile /
+--  readfile when available. Provides BuildConfigSection that
+--  spawns a Configurations groupbox in any tab. If the executor
+--  lacks file IO ( e.g. studio ), all calls degrade to no-ops.
+-- ============================================================
+local SaveManager = {
+    _lib            = Library,
+    _folder         = "ArvynLib",
+    _ignoreTheme    = false,
+    _ignoreIndexes  = {},
+    _autoload       = nil,
+}
+
+local function fsEnabled()
+    return type(writefile) == "function"
+       and type(readfile)  == "function"
+       and type(isfile)    == "function"
+       and type(makefolder)== "function"
+       and type(isfolder)  == "function"
+end
+
+local function ensureFolder(path)
+    if not fsEnabled() then return false end
+    if not isfolder(path) then pcall(makefolder, path) end
+    return isfolder(path)
+end
+
+function SaveManager:SetLibrary(lib) self._lib = lib end
+function SaveManager:SetFolder(folder)
+    self._folder = folder
+    if fsEnabled() then
+        local parts = {}
+        for p in folder:gmatch("[^/]+") do
+            table.insert(parts, p)
+            ensureFolder(table.concat(parts, "/"))
+        end
+        ensureFolder(folder .. "/configs")
+    end
+end
+function SaveManager:IgnoreThemeSettings() self._ignoreTheme = true end
+function SaveManager:SetIgnoreIndexes(t)
+    self._ignoreIndexes = {}
+    for _, k in ipairs(t or {}) do self._ignoreIndexes[k] = true end
+end
+function SaveManager:SetSubFolder(s) self._sub = s end
+
+local function jsonEncode(t)
+    local ok, s = pcall(function()
+        return game:GetService("HttpService"):JSONEncode(t)
+    end)
+    return ok and s or "{}"
+end
+local function jsonDecode(s)
+    local ok, t = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(s or "{}")
+    end)
+    return ok and t or {}
+end
+
+function SaveManager:_serialise()
+    local t = { toggles = {}, options = {} }
+    for k, o in pairs(self._lib.Toggles) do
+        if not self._ignoreIndexes[k] then
+            t.toggles[k] = o.Value and true or false
+        end
+    end
+    for k, o in pairs(self._lib.Options) do
+        if not self._ignoreIndexes[k] then
+            t.options[k] = o.Value
+        end
+    end
+    return t
+end
+
+function SaveManager:_apply(data)
+    if type(data) ~= "table" then return end
+    if data.toggles then
+        for k, v in pairs(data.toggles) do
+            local o = self._lib.Toggles[k]
+            if o and o.SetValue then pcall(o.SetValue, o, v) end
+        end
+    end
+    if data.options then
+        for k, v in pairs(data.options) do
+            local o = self._lib.Options[k]
+            if o and o.SetValue then pcall(o.SetValue, o, v) end
+        end
+    end
+end
+
+function SaveManager:Save(name)
+    if not fsEnabled() then return false, "no fs" end
+    name = (name or "default"):gsub("[^%w%-_]", "_")
+    local path = self._folder .. "/configs/" .. name .. ".json"
+    local ok, err = pcall(writefile, path, jsonEncode(self:_serialise()))
+    return ok, err
+end
+
+function SaveManager:Load(name)
+    if not fsEnabled() then return false, "no fs" end
+    name = (name or "default"):gsub("[^%w%-_]", "_")
+    local path = self._folder .. "/configs/" .. name .. ".json"
+    if not isfile(path) then return false, "missing" end
+    local ok, body = pcall(readfile, path)
+    if not ok then return false, body end
+    self:_apply(jsonDecode(body))
+    -- Sync the topbar config label so the read-only indicator
+    -- always shows the active config name.
+    if self._lib and self._lib._cfgLbl then
+        pcall(function() self._lib._cfgLbl.Text = name end)
+    end
+    self._current = name
+    return true
+end
+
+function SaveManager:ListConfigs()
+    local out = { "default" }
+    if fsEnabled() and isfolder(self._folder .. "/configs") then
+        local ok, files = pcall(listfiles, self._folder .. "/configs")
+        if ok and files then
+            local seen = { default = true }
+            for _, f in ipairs(files) do
+                local n = f:match("([^/\\]+)%.json$")
+                if n and not seen[n] then
+                    table.insert(out, n)
+                    seen[n] = true
+                end
+            end
+        end
+    end
+    return out
+end
+
+function SaveManager:LoadAutoloadConfig()
+    if not fsEnabled() then return end
+    local apath = self._folder .. "/autoload.txt"
+    if isfile(apath) then
+        local ok, name = pcall(readfile, apath)
+        if ok and name and #name > 0 then
+            self._autoload = name
+            self:Load(name)
+        end
+    end
+end
+
+function SaveManager:BuildConfigSection(tab)
+    if not tab or not tab.AddLeftGroupbox then return end
+    local gb = tab:AddRightGroupbox("Configurations")
+
+    local nameInput = gb:AddInput("ConfigName", {
+        Text        = "Name",
+        Placeholder = "default",
+        Default     = "default",
+        MaxLength   = 32,
+    })
+
+    local listOpt
+    local function listConfigs()
+        local out = { "default" }
+        if fsEnabled() and isfolder(self._folder .. "/configs") then
+            local ok, files = pcall(listfiles, self._folder .. "/configs")
+            if ok and files then
+                local seen = { default = true }
+                for _, f in ipairs(files) do
+                    local n = f:match("([^/\\]+)%.json$")
+                    if n and not seen[n] then
+                        table.insert(out, n)
+                        seen[n] = true
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    listOpt = gb:AddDropdown("ConfigList", {
+        Text     = "Config",
+        Values   = listConfigs(),
+        Default  = "default",
+        Multi    = false,
+    })
+
+    gb:AddButton("Save", function()
+        local n = nameInput.Value
+        local ok, err = self:Save(n)
+        if ok then
+            Library:Notify("Saved config '" .. tostring(n) .. "'", 3)
+            listOpt:SetValues(listConfigs())
+        else
+            Library:Notify("Save failed: " .. tostring(err), 4)
+        end
+    end)
+
+    gb:AddButton("Overwrite Config", function()
+        local n = listOpt.Value or "default"
+        local ok, err = self:Save(n)
+        if ok then
+            Library:Notify("Overwrote '" .. tostring(n) .. "'", 3)
+        else
+            Library:Notify("Overwrite failed: " .. tostring(err), 4)
+        end
+    end)
+
+    gb:AddButton("Load", function()
+        local n = listOpt.Value
+        local ok, err = self:Load(n)
+        if ok then
+            Library:Notify("Loaded config '" .. tostring(n) .. "'", 3)
+        else
+            Library:Notify("Load failed: " .. tostring(err), 4)
+        end
+    end)
+
+    gb:AddButton("Set Autoload", function()
+        if not fsEnabled() then
+            Library:Notify("No filesystem support", 3)
+            return
+        end
+        pcall(writefile, self._folder .. "/autoload.txt", listOpt.Value or "default")
+        Library:Notify("Autoload set to '" .. tostring(listOpt.Value) .. "'", 3)
+    end)
+
+    gb:AddButton("Reset Autoload", function()
+        if not fsEnabled() then
+            Library:Notify("No filesystem support", 3)
+            return
+        end
+        local apath = self._folder .. "/autoload.txt"
+        if isfile(apath) then
+            local ok = pcall(delfile, apath)
+            if ok then
+                self._autoload = nil
+                Library:Notify("Autoload cleared", 3)
+            else
+                Library:Notify("Could not clear autoload", 3)
+            end
+        else
+            Library:Notify("No autoload set", 2)
+        end
+    end)
+
+    gb:AddButton("Refresh List", function()
+        listOpt:SetValues(listConfigs())
+        Library:Notify("Config list refreshed", 2)
+    end)
+end
+
+Library.SaveManager = SaveManager
+
+-- ============================================================
+--  Public exports
+-- ============================================================
+return Library
