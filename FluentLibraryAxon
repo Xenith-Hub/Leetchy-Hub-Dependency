@@ -39,7 +39,7 @@ local ClosureBindings = {
 
 			return copy
 		end
-	
+
 		return deepcopy(ToClone), true
 	else
 		return ToClone, false
@@ -454,7 +454,7 @@ return function(Theme, Parent, DialogCheck)
 	Button.Title = New("TextLabel", {
 		FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json"),
 		TextColor3 = Color3.fromRGB(200, 200, 200),
-		TextSize = 13,
+		TextSize = 14,
 		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		TextYAlignment = Enum.TextYAlignment.Center,
@@ -841,7 +841,7 @@ return function(Title, Desc, Parent, Hover, Config)
 			TooltipLabel,
 		}) :: Frame
 
-		local function PositionTooltip(Position)
+		local function PositionTooltip(Position: Vector3?)
 			local MouseLocation = Position or UserInputService:GetMouseLocation()
 			Tooltip.Position = UDim2.fromOffset(MouseLocation.X + 14, MouseLocation.Y + 12)
 		end
@@ -1725,7 +1725,7 @@ return function(Parent, Acrylic)
 	Textbox.Input = New("TextBox", {
 		FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json"),
 		TextColor3 = Color3.fromRGB(200, 200, 200),
-		TextSize = 14,
+		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextYAlignment = Enum.TextYAlignment.Center,
 		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
@@ -1749,14 +1749,53 @@ return function(Parent, Acrylic)
 	})
 
 	Textbox.Indicator = New("Frame", {
-		Size = UDim2.new(1, -4, 0, 1),
-		Position = UDim2.new(0, 2, 1, 0),
+		Size = UDim2.new(1, -8, 0, 1),
+		Position = UDim2.new(0, 4, 1, -1),
 		AnchorPoint = Vector2.new(0, 1),
 		BackgroundTransparency = Acrylic and 0.5 or 0,
 		ThemeTag = {
 			BackgroundColor3 = Acrylic and "InputIndicator" or "DialogInputLine",
 		},
+	}, {
+		New("UICorner", {
+			CornerRadius = UDim.new(1, 0),
+		}),
 	})
+
+	local IdleIndicator = {
+		X = 4,
+		Width = -8,
+		Height = 1,
+		Transparency = Acrylic and 0.5 or 0,
+	}
+	local ActiveIndicator = {
+		X = 7,
+		Width = -14,
+		Height = 2,
+		Transparency = 0,
+	}
+	local IndicatorMotor = Flipper.GroupMotor.new({
+		X = IdleIndicator.X,
+		Width = IdleIndicator.Width,
+		Height = IdleIndicator.Height,
+		Transparency = IdleIndicator.Transparency,
+	})
+
+	IndicatorMotor:onStep(function(Value)
+		Textbox.Indicator.Size = UDim2.new(1, Value.Width, 0, Value.Height)
+		Textbox.Indicator.Position = UDim2.new(0, Value.X, 1, -1)
+		Textbox.Indicator.BackgroundTransparency = Value.Transparency
+	end)
+
+	local function SetIndicatorState(Focused)
+		local Target = Focused and ActiveIndicator or IdleIndicator
+		IndicatorMotor:setGoal({
+			X = Flipper.Spring.new(Target.X, { frequency = 7 }),
+			Width = Flipper.Spring.new(Target.Width, { frequency = 7 }),
+			Height = Flipper.Spring.new(Target.Height, { frequency = 7 }),
+			Transparency = Flipper.Spring.new(Target.Transparency, { frequency = 9 }),
+		})
+	end
 
 	Textbox.Frame = New("Frame", {
 		Size = UDim2.new(0, 0, 0, 32),
@@ -1815,18 +1854,14 @@ return function(Parent, Acrylic)
 
 	Creator.AddSignal(Textbox.Input.Focused, function()
 		Update()
-		Textbox.Indicator.Size = UDim2.new(1, -2, 0, 2)
-		Textbox.Indicator.Position = UDim2.new(0, 1, 1, 0)
-		Textbox.Indicator.BackgroundTransparency = 0
+		SetIndicatorState(true)
 		Creator.OverrideTag(Textbox.Frame, { BackgroundColor3 = Acrylic and "InputFocused" or "DialogHolder" })
 		Creator.OverrideTag(Textbox.Indicator, { BackgroundColor3 = "Accent" })
 	end)
 
 	Creator.AddSignal(Textbox.Input.FocusLost, function()
 		Update()
-		Textbox.Indicator.Size = UDim2.new(1, -4, 0, 1)
-		Textbox.Indicator.Position = UDim2.new(0, 2, 1, 0)
-		Textbox.Indicator.BackgroundTransparency = 0.5
+		SetIndicatorState(false)
 		Creator.OverrideTag(Textbox.Frame, { BackgroundColor3 = Acrylic and "Input" or "DialogInput" })
 		Creator.OverrideTag(Textbox.Indicator, { BackgroundColor3 = Acrylic and "InputIndicator" or "DialogInputLine" })
 	end)
@@ -1841,10 +1876,69 @@ local Creator = require(Root.Modules.Creator)
 local New = Creator.New
 local AddSignal = Creator.AddSignal
 
+local LOGO_LOCAL = "axonhub_logo.png"
+local LOGO_URL = "https://cdn.discordapp.com/attachments/1498401165065453598/1505246797151473717/image-removebg-preview6.png?ex=6a09edd2&is=6a089c52&hm=407a08f84d8669c197fab4307bf5eeb2416f679e72246fb45ae3c5de2edf7e1c&"
+local LOGO_FALLBACK = "rbxassetid://116597186532041"
+
+local _logoResolved
+local function resolveLogo()
+	if _logoResolved ~= nil then return _logoResolved end
+	local hasIsfile = type(isfile) == "function"
+	local hasWrite = type(writefile) == "function"
+	local hasCustom = type(getcustomasset) == "function"
+
+	if hasIsfile and hasCustom and isfile(LOGO_LOCAL) then
+		local ok, url = pcall(getcustomasset, LOGO_LOCAL)
+		if ok and type(url) == "string" and #url > 0 then
+			_logoResolved = url
+			return url
+		end
+	end
+
+	if not (hasWrite and hasCustom) then
+		_logoResolved = LOGO_FALLBACK
+		return _logoResolved
+	end
+
+	local req
+	if type(request) == "function" then req = request
+	elseif type(http_request) == "function" then req = http_request
+	elseif type(syn) == "table" and type(syn.request) == "function" then req = syn.request
+	elseif type(fluxus) == "table" and type(fluxus.request) == "function" then req = fluxus.request
+	end
+
+	local body
+	if req then
+		local ok, res = pcall(req, { Url = LOGO_URL, Method = "GET" })
+		if ok and res and (res.StatusCode == 200 or res.Status == 200) and res.Body then
+			body = res.Body
+		end
+	end
+	if not body then
+		local ok, b = pcall(function() return game:HttpGet(LOGO_URL) end)
+		if ok and type(b) == "string" and #b > 0 then body = b end
+	end
+
+	if body and #body > 100 and body:sub(1, 4) == "\137PNG" then
+		local saveOk = pcall(writefile, LOGO_LOCAL, body)
+		if saveOk then
+			local ok, url = pcall(getcustomasset, LOGO_LOCAL)
+			if ok and type(url) == "string" and #url > 0 then
+				_logoResolved = url
+				return url
+			end
+		end
+	end
+
+	_logoResolved = LOGO_FALLBACK
+	return _logoResolved
+end
+
 return function(Config)
 	local TitleBar = {}
 
 	local Library = require(Root)
+	local LogoImage = (typeof(Config.Logo) == "string" and Config.Logo ~= "") and Config.Logo or resolveLogo()
 
 	local function BarButton(Icon, Pos, Parent, Debounce, Callback)
 		local Button = {
@@ -1853,14 +1947,14 @@ return function(Config)
 		}
 
 		Button.Frame = New("TextButton", {
-			Size = UDim2.new(0, 34, 1, -8),
+			Size = UDim2.fromOffset(30, 30),
 			AnchorPoint = Vector2.new(1, 0),
-			BackgroundTransparency = 1,
+			BackgroundTransparency = 0.95,
 			Parent = Parent,
 			Position = Pos,
 			Text = "",
 			ThemeTag = {
-				BackgroundColor3 = "Text",
+				BackgroundColor3 = "Tab",
 			},
 		}, {
 			New("UICorner", {
@@ -1873,6 +1967,7 @@ return function(Config)
 				AnchorPoint = Vector2.new(0.5, 0.5),
 				BackgroundTransparency = 1,
 				Name = "Icon",
+				ImageTransparency = 0.06,
 				ThemeTag = {
 					ImageColor3 = "Text",
 				},
@@ -1880,21 +1975,26 @@ return function(Config)
 		})
 
 		local Motor, SetTransparency = Creator.SpringMotor(1, Button.Frame, "BackgroundTransparency")
+		local IconMotor, SetIconTransparency = Creator.SpringMotor(0.18, Button.Frame.Icon, "ImageTransparency")
 
 		AddSignal(Button.Frame.MouseEnter, function()
-			SetTransparency(0.94)
+			SetTransparency(0.86)
+			SetIconTransparency(0)
 		end)
 
 		AddSignal(Button.Frame.MouseLeave, function()
-			SetTransparency(1, true)
+			SetTransparency(0.95, true)
+			SetIconTransparency(0.06)
 		end)
 
 		AddSignal(Button.Frame.MouseButton1Down, function()
-			SetTransparency(0.96)
+			SetTransparency(0.8)
+			SetIconTransparency(0)
 		end)
 
 		AddSignal(Button.Frame.MouseButton1Up, function()
-			SetTransparency(0.94)
+			SetTransparency(0.86)
+			SetIconTransparency(0)
 		end)
 
 		AddSignal(Button.Frame.MouseButton1Click, function(...)
@@ -1914,9 +2014,21 @@ return function(Config)
 		Parent = Config.Parent
 	}, {
 		New("Frame", {
+			Size = UDim2.new(1, -12, 1, -8),
+			Position = UDim2.fromOffset(6, 4),
+			BackgroundTransparency = 0.86,
+			ThemeTag = {
+				BackgroundColor3 = "DialogHolder",
+			},
+		}, {
+			New("UICorner", {
+				CornerRadius = UDim.new(0, 10),
+			}),
+		}),
+		New("Frame", {
 			BackgroundTransparency = 0.7,
-			Size = UDim2.new(1, -24, 0, 1),
-			Position = UDim2.new(0, 12, 1, 0),
+			Size = UDim2.new(1, -28, 0, 1),
+			Position = UDim2.new(0, 14, 1, 0),
 			ThemeTag = {
 				BackgroundColor3 = "TitleBarLine",
 			}
@@ -1924,33 +2036,54 @@ return function(Config)
 	})
 
 	TitleBar.TitleHolder = New("Frame", {
-		Size = UDim2.new(1, -16, 1, 0),
+		Size = UDim2.new(1, -122, 1, -6),
 		Parent = TitleBar.Frame,
-		Position = UDim2.new(0, 16, 0, 0),
+		Position = UDim2.new(0, 14, 0, 3),
 		BackgroundTransparency = 1,
 	}, {
-		New("UIListLayout", {
-			Padding = UDim.new(0, 5),
-			FillDirection = Enum.FillDirection.Horizontal,
-			SortOrder = Enum.SortOrder.LayoutOrder,
-		})
+		New("ImageLabel", {
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 0, 0.5, 2),
+			Size = UDim2.fromOffset(38, 38),
+			BackgroundTransparency = 1,
+			Image = LogoImage,
+		}, {
+			New("UICorner", {
+				CornerRadius = UDim.new(0, 7),
+			}),
+		}),
+		New("Frame", {
+			Size = UDim2.new(1, -44, 1, 0),
+			Position = UDim2.fromOffset(44, 0),
+			BackgroundTransparency = 1,
+		}, {
+			New("UIListLayout", {
+				Padding = UDim.new(0, 1),
+				FillDirection = Enum.FillDirection.Vertical,
+				VerticalAlignment = Enum.VerticalAlignment.Center,
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			}),
+		}),
 	})
+
+	local TextHolder = TitleBar.TitleHolder:FindFirstChildOfClass("Frame")
 
 	TitleBar.Title = New("TextLabel", {
 		RichText = true,
 		Text = Config.Title,
-		Parent = TitleBar.TitleHolder,
+		Parent = TextHolder,
 		FontFace = Font.new(
 			"rbxasset://fonts/families/GothamSSm.json",
-			Enum.FontWeight.Regular,
+			Enum.FontWeight.SemiBold,
 			Enum.FontStyle.Normal
 		),
-		TextSize = 12,
+		TextSize = 13,
 		TextXAlignment = "Left",
-		TextYAlignment = "Center",
-		Size = UDim2.fromScale(0, 1),
-		AutomaticSize = Enum.AutomaticSize.X,
+		TextYAlignment = "Bottom",
+		Size = UDim2.new(1, 0, 0, 14),
+		AutomaticSize = Enum.AutomaticSize.None,
 		BackgroundTransparency = 1,
+		LayoutOrder = 1,
 		ThemeTag = {
 			TextColor3 = "Text",
 		}
@@ -1959,25 +2092,26 @@ return function(Config)
 	TitleBar.SubTitle = New("TextLabel", {
 		RichText = true,
 		Text = Config.SubTitle,
-		Parent = TitleBar.TitleHolder,
-		TextTransparency = 0.4,
+		Parent = TextHolder,
+		TextTransparency = 0.25,
 		FontFace = Font.new(
 			"rbxasset://fonts/families/GothamSSm.json",
 			Enum.FontWeight.Regular,
 			Enum.FontStyle.Normal
 		),
-		TextSize = 12,
+		TextSize = 11,
 		TextXAlignment = "Left",
-		TextYAlignment = "Center",
-		Size = UDim2.fromScale(0, 1),
-		AutomaticSize = Enum.AutomaticSize.X,
+		TextYAlignment = "Top",
+		Size = UDim2.new(1, 0, 0, 12),
+		AutomaticSize = Enum.AutomaticSize.None,
 		BackgroundTransparency = 1,
+		LayoutOrder = 2,
 		ThemeTag = {
 			TextColor3 = "Text",
 		}
 	})
 
-	TitleBar.CloseButton = BarButton(Library.Utilities:GetIcon("Close"), UDim2.new(1, -4, 0, 4), TitleBar.Frame, 0, function()
+	TitleBar.CloseButton = BarButton(Library.Utilities:GetIcon("Close"), UDim2.new(1, -10, 0, 6), TitleBar.Frame, 0, function()
 		Library.CreatedWindow:Dialog{
 			Title = "Close",
 			Content = "Are you sure you want to unload the interface?",
@@ -1993,11 +2127,11 @@ return function(Config)
 		}
 	end)
 
-	TitleBar.MaxButton = BarButton(Library.Utilities:GetIcon("Max"), UDim2.new(1, -40, 0, 4), TitleBar.Frame, 0, function()
+	TitleBar.MaxButton = BarButton(Library.Utilities:GetIcon("Max"), UDim2.new(1, -46, 0, 6), TitleBar.Frame, 0, function()
 		Config.Window.Maximize(not Config.Window.Maximized)
 	end)
 
-	TitleBar.MinButton = BarButton(Library.Utilities:GetIcon("Min"), UDim2.new(1, -80, 0, 4), TitleBar.Frame, 0, function()
+	TitleBar.MinButton = BarButton(Library.Utilities:GetIcon("Min"), UDim2.new(1, -82, 0, 6), TitleBar.Frame, 0, function()
 		Config.Window:Minimize()
 	end)
 
@@ -2380,6 +2514,7 @@ return function(Config)
 	Window.TitleBar = require(script.Parent.TitleBar)({
 		Title = Config.Title,
 		SubTitle = Config.SubTitle,
+		Logo = Config.Logo,
 		Parent = Window.Root,
 		Window = Window,
 	})
@@ -3448,8 +3583,95 @@ function Element:New(Idx, Config)
 end
 
 return Element
+
 end)() end,
-    [16] = function()local wax,script,require=ImportGlobals(16)local ImportGlobals return (function(...)local UserInputService = game:GetService("UserInputService")
+    [16] = function()local wax,script,require=ImportGlobals(16)local ImportGlobals return (function(...)local Root = script.Parent.Parent
+local Creator = require(Root.Modules.Creator)
+
+local New = Creator.New
+
+local function NextLayoutOrder(Parent)
+	if not Parent then
+		return 7
+	end
+
+	local Current = Parent:GetAttribute("__FluentLayoutOrder")
+	local Next = (typeof(Current) == "number" and Current or 0) + 1
+	Parent:SetAttribute("__FluentLayoutOrder", Next)
+	return Next
+end
+
+local Element = {}
+Element.__index = Element
+Element.__type = "Divider"
+
+function Element:New(Idx, Config)
+	Config = typeof(Config) == "table" and Config or { Title = Config or Idx }
+
+	local Divider = {
+		Type = "Divider",
+	}
+
+	local Height = typeof(Config.Height) == "number" and Config.Height or 18
+	local Text = Config.Title or Config.Text or Config.Label
+
+	local Children = {
+		New("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 0, 0.5, 0),
+			Size = Text and UDim2.new(0.32, -6, 0, 1) or UDim2.new(1, 0, 0, 1),
+			BackgroundTransparency = 0.55,
+			ThemeTag = {
+				BackgroundColor3 = "ElementBorder",
+			},
+		}),
+	}
+
+	if Text then
+		table.insert(Children, New("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 14),
+			BackgroundTransparency = 1,
+			FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal),
+			Text = Text,
+			TextSize = 11,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			ThemeTag = {
+				TextColor3 = "SubText",
+			},
+		}))
+
+		table.insert(Children, New("Frame", {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, 0, 0.5, 0),
+			Size = UDim2.new(0.32, -6, 0, 1),
+			BackgroundTransparency = 0.55,
+			ThemeTag = {
+				BackgroundColor3 = "ElementBorder",
+			},
+		}))
+	end
+
+	Divider.Root = New("Frame", {
+		Size = UDim2.new(1, 0, 0, Height),
+		BackgroundTransparency = 1,
+		Parent = self.Container,
+		LayoutOrder = NextLayoutOrder(self.Container),
+	}, Children)
+
+	function Divider:Destroy()
+		Divider.Root:Destroy()
+	end
+
+	return Divider
+end
+
+return Element
+
+end)() end,
+    [17] = function()local wax,script,require=ImportGlobals(17)local ImportGlobals return (function(...)local UserInputService = game:GetService("UserInputService")
 local Mouse = game:GetService("Players").LocalPlayer:GetMouse()
 local Camera = game:GetService("Workspace").CurrentCamera
 
@@ -4142,7 +4364,7 @@ end
 return Element
 
 end)() end,
-    [17] = function()local wax,script,require=ImportGlobals(17)local ImportGlobals return (function(...)local Root = script.Parent.Parent
+    [18] = function()local wax,script,require=ImportGlobals(18)local ImportGlobals return (function(...)local Root = script.Parent.Parent
 local Creator = require(Root.Modules.Creator)
 
 local AddSignal = Creator.AddSignal
@@ -4247,7 +4469,7 @@ end
 return Element
 
 end)() end,
-    [18] = function()local wax,script,require=ImportGlobals(18)local ImportGlobals return (function(...)local UserInputService = game:GetService("UserInputService")
+    [19] = function()local wax,script,require=ImportGlobals(19)local ImportGlobals return (function(...)local UserInputService = game:GetService("UserInputService")
 
 local Root = script.Parent.Parent
 local Creator = require(Root.Modules.Creator)
@@ -4473,7 +4695,7 @@ end
 return Element
 
 end)() end,
-    [19] = function()local wax,script,require=ImportGlobals(19)local ImportGlobals return (function(...)local Root = script.Parent.Parent
+    [20] = function()local wax,script,require=ImportGlobals(20)local ImportGlobals return (function(...)local Root = script.Parent.Parent
 local Components = Root.Components
 
 local Element = {}
@@ -4554,7 +4776,7 @@ end
 return Element
 
 end)() end,
-    [20] = function()local wax,script,require=ImportGlobals(20)local ImportGlobals return (function(...)local UserInputService = game:GetService("UserInputService")
+    [21] = function()local wax,script,require=ImportGlobals(21)local ImportGlobals return (function(...)local UserInputService = game:GetService("UserInputService")
 local Root = script.Parent.Parent
 local Creator = require(Root.Modules.Creator)
 
@@ -5037,7 +5259,7 @@ end
 return Element
 
 end)() end,
-    [21] = function()local wax,script,require=ImportGlobals(21)local ImportGlobals return (function(...)local TweenService, UserInputService = game:GetService("TweenService"), game:GetService("UserInputService")
+    [22] = function()local wax,script,require=ImportGlobals(22)local ImportGlobals return (function(...)local TweenService, UserInputService = game:GetService("TweenService"), game:GetService("UserInputService")
 local Root = script.Parent.Parent
 local Creator = require(Root.Modules.Creator)
  
@@ -5380,7 +5602,7 @@ end
 return Element
 
 end)() end,
-    [23] = function()local wax,script,require=ImportGlobals(23)local ImportGlobals return (function(...)local Acrylic = {
+    [24] = function()local wax,script,require=ImportGlobals(24)local ImportGlobals return (function(...)local Acrylic = {
 	AcrylicBlur = require(script.AcrylicBlur),
 	CreateAcrylic = require(script.CreateAcrylic),
 	AcrylicPaint = require(script.AcrylicPaint),
@@ -5433,7 +5655,7 @@ end
 return Acrylic
 
 end)() end,
-    [24] = function()local wax,script,require=ImportGlobals(24)local ImportGlobals return (function(...)local Root = script.Parent.Parent.Parent
+    [25] = function()local wax,script,require=ImportGlobals(25)local ImportGlobals return (function(...)local Root = script.Parent.Parent.Parent
 local Creator = require(Root.Modules.Creator)
 local createAcrylic = require(script.Parent.CreateAcrylic)
 local viewportPointToWorld, getOffset = unpack(require(script.Parent.Utils))
@@ -5551,7 +5773,7 @@ return function(distance)
 end
 
 end)() end,
-    [25] = function()local wax,script,require=ImportGlobals(25)local ImportGlobals return (function(...)local Root = script.Parent.Parent.Parent
+    [26] = function()local wax,script,require=ImportGlobals(26)local ImportGlobals return (function(...)local Root = script.Parent.Parent.Parent
 local Creator = require(Root.Modules.Creator)
 local AcrylicBlur = require(script.Parent.AcrylicBlur)
 
@@ -5673,7 +5895,7 @@ return function(props)
 end
 
 end)() end,
-    [26] = function()local wax,script,require=ImportGlobals(26)local ImportGlobals return (function(...)local Root = script.Parent.Parent.Parent
+    [27] = function()local wax,script,require=ImportGlobals(27)local ImportGlobals return (function(...)local Root = script.Parent.Parent.Parent
 local Creator = require(Root.Modules.Creator)
 
 local function createAcrylic()
@@ -5700,7 +5922,7 @@ end
 return createAcrylic
 
 end)() end,
-    [27] = function()local wax,script,require=ImportGlobals(27)local ImportGlobals return (function(...)local function map(value, inMin, inMax, outMin, outMax)
+    [28] = function()local wax,script,require=ImportGlobals(28)local ImportGlobals return (function(...)local function map(value, inMin, inMax, outMin, outMax)
 	return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin
 end
 
@@ -5717,7 +5939,7 @@ end
 return { viewportPointToWorld, getOffset }
 
 end)() end,
-    [28] = function()local wax,script,require=ImportGlobals(28)local ImportGlobals return (function(...)local Root = script.Parent.Parent
+    [29] = function()local wax,script,require=ImportGlobals(29)local ImportGlobals return (function(...)local Root = script.Parent.Parent
 local Themes = require(Root.Themes)
 local Flipper, Ripple = require(Root.Packages.Flipper), require(Root.Packages.Ripple)
 local Signal = require(Root.Packages.Signal)
@@ -5947,7 +6169,7 @@ end
 return Creator
 
 end)() end,
-    [29] = function()local wax,script,require=ImportGlobals(29)local ImportGlobals return (function(...)local icons_1 = 'rbxassetid://124334518624683'
+    [30] = function()local wax,script,require=ImportGlobals(30)local ImportGlobals return (function(...)local icons_1 = 'rbxassetid://124334518624683'
 local icons_2 = 'rbxassetid://113826256227095'
 local icons_3 = 'rbxassetid://129900432084566'
 local icons_4 = 'rbxassetid://118976126805967'
@@ -59133,7 +59355,7 @@ return {
 	}
 }
 end)() end,
-    [30] = function()local wax,script,require=ImportGlobals(30)local ImportGlobals return (function(...)local Root = script.Parent.Parent
+    [31] = function()local wax,script,require=ImportGlobals(31)local ImportGlobals return (function(...)local Root = script.Parent.Parent
 local Creator = require(Root.Modules.Creator)
 local New = Creator.New
 
@@ -59211,7 +59433,7 @@ return function()
 end
 
 end)() end,
-    [31] = function()local wax,script,require=ImportGlobals(31)local ImportGlobals return (function(...)local Themes = {
+    [32] = function()local wax,script,require=ImportGlobals(32)local ImportGlobals return (function(...)local Themes = {
 	Names = {
 		"Glass",
 		"Vynixu",
@@ -59288,7 +59510,7 @@ end
 return Themes
 
 end)() end,
-    [32] = function()local wax,script,require=ImportGlobals(32)local ImportGlobals return (function(...)return {
+    [33] = function()local wax,script,require=ImportGlobals(33)local ImportGlobals return (function(...)return {
     Accent = Color3.fromRGB(102, 136, 204), -- #6688cc
 
     AcrylicMain = Color3.fromRGB(0, 12, 24), -- #000c18
@@ -59335,7 +59557,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [33] = function()local wax,script,require=ImportGlobals(33)local ImportGlobals return (function(...)return {
+    [34] = function()local wax,script,require=ImportGlobals(34)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#ec6a3f"),
 
     AcrylicMain = Color3.fromHex("#31312e"),
@@ -59382,7 +59604,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [34] = function()local wax,script,require=ImportGlobals(34)local ImportGlobals return (function(...)return {
+    [35] = function()local wax,script,require=ImportGlobals(35)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#00BCD4"),
 
     AcrylicMain = Color3.fromHex("#29353b"),
@@ -59429,7 +59651,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [35] = function()local wax,script,require=ImportGlobals(35)local ImportGlobals return (function(...)return {
+    [36] = function()local wax,script,require=ImportGlobals(36)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#b133ff"),
 
     AcrylicMain = Color3.fromHex("#120024"),
@@ -59476,7 +59698,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [36] = function()local wax,script,require=ImportGlobals(36)local ImportGlobals return (function(...)return {
+    [37] = function()local wax,script,require=ImportGlobals(37)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(97, 62, 167),
 
 	AcrylicMain = Color3.fromRGB(20, 20, 20),
@@ -59524,7 +59746,7 @@ end)() end,
 }
 
 end)() end,
-    [37] = function()local wax,script,require=ImportGlobals(37)local ImportGlobals return (function(...)return {
+    [38] = function()local wax,script,require=ImportGlobals(38)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(60, 165, 165),
 
 	AcrylicMain = Color3.fromRGB(20, 20, 20),
@@ -59572,7 +59794,7 @@ end)() end,
 }
 
 end)() end,
-    [38] = function()local wax,script,require=ImportGlobals(38)local ImportGlobals return (function(...)return {
+    [39] = function()local wax,script,require=ImportGlobals(39)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#5294e2"),
 
     AcrylicMain = Color3.fromHex("#383c4a"),
@@ -59619,7 +59841,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [39] = function()local wax,script,require=ImportGlobals(39)local ImportGlobals return (function(...)return {
+    [40] = function()local wax,script,require=ImportGlobals(40)local ImportGlobals return (function(...)return {
     Accent = Color3.fromRGB(109, 180, 120),
 
     AcrylicMain = Color3.fromRGB(38, 38, 38),
@@ -59666,7 +59888,7 @@ end)() end,
     HoverChange = 0.04
 }
 end)() end,
-    [40] = function()local wax,script,require=ImportGlobals(40)local ImportGlobals return (function(...)return {
+    [41] = function()local wax,script,require=ImportGlobals(41)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(96, 205, 255),
 
 	AcrylicMain = Color3.fromRGB(60, 60, 60),
@@ -59717,7 +59939,7 @@ end)() end,
 }
 
 end)() end,
-    [41] = function()local wax,script,require=ImportGlobals(41)local ImportGlobals return (function(...)return {
+    [42] = function()local wax,script,require=ImportGlobals(42)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(72, 138, 182),
 
 	AcrylicMain = Color3.fromRGB(30, 30, 30),
@@ -59748,7 +59970,7 @@ end)() end,
 }
 
 end)() end,
-    [42] = function()local wax,script,require=ImportGlobals(42)local ImportGlobals return (function(...)return {
+    [43] = function()local wax,script,require=ImportGlobals(43)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#fecb52"),
 
     AcrylicMain = Color3.fromHex("#2c2826"),
@@ -59795,7 +60017,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [43] = function()local wax,script,require=ImportGlobals(43)local ImportGlobals return (function(...)return {
+    [44] = function()local wax,script,require=ImportGlobals(44)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#e7f98b"),
 
     AcrylicMain = Color3.fromHex("#2a2d2a"),
@@ -59842,7 +60064,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [44] = function()local wax,script,require=ImportGlobals(44)local ImportGlobals return (function(...)return {
+    [45] = function()local wax,script,require=ImportGlobals(45)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#34FEBB"),
 
     AcrylicMain = Color3.fromHex("#1D262F"),
@@ -59889,7 +60111,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [45] = function()local wax,script,require=ImportGlobals(45)local ImportGlobals return (function(...)return {
+    [46] = function()local wax,script,require=ImportGlobals(46)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#fec38f"),
 
     AcrylicMain = Color3.fromHex("#2c2734"),
@@ -59936,7 +60158,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [46] = function()local wax,script,require=ImportGlobals(46)local ImportGlobals return (function(...)return {
+    [47] = function()local wax,script,require=ImportGlobals(47)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#fe7734"),
 
     AcrylicMain = Color3.fromHex("#24242e"),
@@ -59983,7 +60205,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [47] = function()local wax,script,require=ImportGlobals(47)local ImportGlobals return (function(...)return {
+    [48] = function()local wax,script,require=ImportGlobals(48)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#cb5226"),
 
     AcrylicMain = Color3.fromHex("#eff0f1"),
@@ -60030,7 +60252,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [48] = function()local wax,script,require=ImportGlobals(48)local ImportGlobals return (function(...)return {
+    [49] = function()local wax,script,require=ImportGlobals(49)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#1f6feb"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#010409"), -- sideBar.background
@@ -60077,7 +60299,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [49] = function()local wax,script,require=ImportGlobals(49)local ImportGlobals return (function(...)return {
+    [50] = function()local wax,script,require=ImportGlobals(50)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#1f6feb"),  -- focusBorder
 
     AcrylicMain = Color3.fromHex("#010409"), -- sideBar.background
@@ -60124,7 +60346,7 @@ end)() end,
     HoverChange = 0.1 
 }
 end)() end,
-    [50] = function()local wax,script,require=ImportGlobals(50)local ImportGlobals return (function(...)return {
+    [51] = function()local wax,script,require=ImportGlobals(51)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#316dca"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#1c2128"), -- sideBar.background
@@ -60171,7 +60393,7 @@ end)() end,
     HoverChange = 0.1 
 }
 end)() end,
-    [51] = function()local wax,script,require=ImportGlobals(51)local ImportGlobals return (function(...)return {
+    [52] = function()local wax,script,require=ImportGlobals(52)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#409eff"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#010409"), -- sideBar.background
@@ -60220,7 +60442,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [52] = function()local wax,script,require=ImportGlobals(52)local ImportGlobals return (function(...)return {
+    [53] = function()local wax,script,require=ImportGlobals(53)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#005cc5"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#1f2428"), -- sideBar.background
@@ -60267,7 +60489,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [53] = function()local wax,script,require=ImportGlobals(53)local ImportGlobals return (function(...)return {
+    [54] = function()local wax,script,require=ImportGlobals(54)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#0969da"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#f6f8fa"), -- textBlockQuote.background
@@ -60314,7 +60536,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [54] = function()local wax,script,require=ImportGlobals(54)local ImportGlobals return (function(...)return {
+    [55] = function()local wax,script,require=ImportGlobals(55)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#0969da"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#f6f8fa"), -- sideBar.background
@@ -60362,7 +60584,7 @@ end)() end,
     HoverChange = 0.1  -- A subtle hover effect
 }
 end)() end,
-    [55] = function()local wax,script,require=ImportGlobals(55)local ImportGlobals return (function(...)return {
+    [56] = function()local wax,script,require=ImportGlobals(56)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#0349b4"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#ffffff"), -- sideBar.background
@@ -60409,7 +60631,7 @@ end)() end,
     HoverChange = 0.1 -- Slightly more pronounced hover effect
 }
 end)() end,
-    [56] = function()local wax,script,require=ImportGlobals(56)local ImportGlobals return (function(...)return {
+    [57] = function()local wax,script,require=ImportGlobals(57)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("2188ff"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("f6f8fa"), -- sideBar.background
@@ -60456,7 +60678,7 @@ end)() end,
     HoverChange = 0.1 -- Slightly more pronounced hover effect
 }
 end)() end,
-    [57] = function()local wax,script,require=ImportGlobals(57)local ImportGlobals return (function(...)return {
+    [58] = function()local wax,script,require=ImportGlobals(58)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(60, 180, 255),
 
 	AcrylicMain = Color3.fromRGB(8, 8, 12),
@@ -60507,7 +60729,7 @@ end)() end,
 }
 
 end)() end,
-    [58] = function()local wax,script,require=ImportGlobals(58)local ImportGlobals return (function(...)return {
+    [59] = function()local wax,script,require=ImportGlobals(59)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#a57a4c"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#221a0f"), -- editor.background
@@ -60554,7 +60776,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [59] = function()local wax,script,require=ImportGlobals(59)local ImportGlobals return (function(...)return {
+    [60] = function()local wax,script,require=ImportGlobals(60)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(0, 103, 192),
 
 	AcrylicMain = Color3.fromRGB(200, 200, 200),
@@ -60602,7 +60824,7 @@ end)() end,
 }
 
 end)() end,
-    [60] = function()local wax,script,require=ImportGlobals(60)local ImportGlobals return (function(...)return {
+    [61] = function()local wax,script,require=ImportGlobals(61)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#75715E"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#272822"), -- editor.background
@@ -60649,7 +60871,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [61] = function()local wax,script,require=ImportGlobals(61)local ImportGlobals return (function(...)return {
+    [62] = function()local wax,script,require=ImportGlobals(62)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#3655b5"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#1e1e1e"), -- editor.background
@@ -60696,7 +60918,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [62] = function()local wax,script,require=ImportGlobals(62)local ImportGlobals return (function(...)return {
+    [63] = function()local wax,script,require=ImportGlobals(63)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#528bff"), -- activityBarBadge.background
 
     AcrylicMain = Color3.fromHex("#16171D"), -- editor.background
@@ -60743,7 +60965,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [63] = function()local wax,script,require=ImportGlobals(63)local ImportGlobals return (function(...)return {
+    [64] = function()local wax,script,require=ImportGlobals(64)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#F92672"), -- Using the keyword color as accent
 
     AcrylicMain = Color3.fromHex("#272822"), -- editor.background
@@ -60790,7 +61012,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [64] = function()local wax,script,require=ImportGlobals(64)local ImportGlobals return (function(...)return {
+    [65] = function()local wax,script,require=ImportGlobals(65)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#9769dc"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#F5F5F5"), -- editor.background
@@ -60837,7 +61059,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [65] = function()local wax,script,require=ImportGlobals(65)local ImportGlobals return (function(...)return {
+    [66] = function()local wax,script,require=ImportGlobals(66)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(180, 55, 90),
 
 	AcrylicMain = Color3.fromRGB(40, 40, 40),
@@ -60885,7 +61107,7 @@ end)() end,
 }
 
 end)() end,
-    [66] = function()local wax,script,require=ImportGlobals(66)local ImportGlobals return (function(...)return {
+    [67] = function()local wax,script,require=ImportGlobals(67)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#2AA198"), -- String color as accent
 
     AcrylicMain = Color3.fromHex("#002B36"), -- editor.background
@@ -60932,7 +61154,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [67] = function()local wax,script,require=ImportGlobals(67)local ImportGlobals return (function(...)return {
+    [68] = function()local wax,script,require=ImportGlobals(68)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#b58900"), -- Using the extension button color as accent
 
     AcrylicMain = Color3.fromHex("#FDF6E3"), -- editor.background
@@ -60979,7 +61201,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [68] = function()local wax,script,require=ImportGlobals(68)local ImportGlobals return (function(...)return {
+    [69] = function()local wax,script,require=ImportGlobals(69)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#bbdaff"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#002451"), -- editor.background
@@ -61026,7 +61248,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [69] = function()local wax,script,require=ImportGlobals(69)local ImportGlobals return (function(...)return {
+    [70] = function()local wax,script,require=ImportGlobals(70)local ImportGlobals return (function(...)return {
     Accent = Color3.fromRGB(97, 161, 107),
 
     AcrylicMain = Color3.fromRGB(252, 245, 228),
@@ -61071,53 +61293,6 @@ end)() end,
     SubText = Color3.fromRGB(170, 170, 170),
     Hover = Color3.fromRGB(149, 149, 149),
     HoverChange = 0.04
-}
-end)() end,
-    [70] = function()local wax,script,require=ImportGlobals(70)local ImportGlobals return (function(...)return {
-    Accent = Color3.fromHex("#48b258"),
-
-    AcrylicMain = Color3.fromHex("#1e1e1e"),
-    AcrylicBorder = Color3.fromHex("#444444"),
-    AcrylicGradient = ColorSequence.new(Color3.fromHex("#1e1e1e"), Color3.fromHex("#1e1e1e")),
-    AcrylicNoise = 0.92,
-
-    TitleBarLine = Color3.fromHex("#444444"),
-    Tab = Color3.fromHex("#dddddd"),
-
-    Element = Color3.fromHex("#242424"),
-    ElementBorder = Color3.fromHex("#404040"),
-    InElementBorder = Color3.fromHex("#48b258"),
-    ElementTransparency = 0,
-
-    ToggleSlider = Color3.fromHex("#48b258"),
-    ToggleToggled = Color3.fromHex("#1e1e1e"),
-
-    SliderRail = Color3.fromHex("#48b258"),
-
-    DropdownFrame = Color3.fromHex("#242424"),
-    DropdownHolder = Color3.fromHex("#242424"),
-    DropdownBorder = Color3.fromHex("#404040"),
-    DropdownOption = Color3.fromHex("#dddddd"),
-
-    Keybind = Color3.fromHex("#242424"),
-
-    Input = Color3.fromHex("#242424"),
-    InputFocused = Color3.fromHex("#242424"),
-    InputIndicator = Color3.fromHex("#808080"),
-
-    Dialog = Color3.fromHex("#242424"),
-    DialogHolder = Color3.fromHex("#1e1e1e"),
-    DialogHolderLine = Color3.fromHex("#404040"),
-    DialogButton = Color3.fromHex("#242424"),
-    DialogButtonBorder = Color3.fromHex("#404040"),
-    DialogBorder = Color3.fromHex("#444444"),
-    DialogInput = Color3.fromHex("#242424"),
-    DialogInputLine = Color3.fromHex("#48b258"),
-
-    Text = Color3.fromHex("#dddddd"),
-    SubText = Color3.fromHex("#808080"),
-    Hover = Color3.fromHex("#2A2D2E"),
-    HoverChange = 0.05
 }
 end)() end,
     [71] = function()local wax,script,require=ImportGlobals(71)local ImportGlobals return (function(...)return {
@@ -61168,6 +61343,53 @@ end)() end,
 }
 end)() end,
     [72] = function()local wax,script,require=ImportGlobals(72)local ImportGlobals return (function(...)return {
+    Accent = Color3.fromHex("#48b258"),
+
+    AcrylicMain = Color3.fromHex("#1e1e1e"),
+    AcrylicBorder = Color3.fromHex("#444444"),
+    AcrylicGradient = ColorSequence.new(Color3.fromHex("#1e1e1e"), Color3.fromHex("#1e1e1e")),
+    AcrylicNoise = 0.92,
+
+    TitleBarLine = Color3.fromHex("#444444"),
+    Tab = Color3.fromHex("#dddddd"),
+
+    Element = Color3.fromHex("#242424"),
+    ElementBorder = Color3.fromHex("#404040"),
+    InElementBorder = Color3.fromHex("#48b258"),
+    ElementTransparency = 0,
+
+    ToggleSlider = Color3.fromHex("#48b258"),
+    ToggleToggled = Color3.fromHex("#1e1e1e"),
+
+    SliderRail = Color3.fromHex("#48b258"),
+
+    DropdownFrame = Color3.fromHex("#242424"),
+    DropdownHolder = Color3.fromHex("#242424"),
+    DropdownBorder = Color3.fromHex("#404040"),
+    DropdownOption = Color3.fromHex("#dddddd"),
+
+    Keybind = Color3.fromHex("#242424"),
+
+    Input = Color3.fromHex("#242424"),
+    InputFocused = Color3.fromHex("#242424"),
+    InputIndicator = Color3.fromHex("#808080"),
+
+    Dialog = Color3.fromHex("#242424"),
+    DialogHolder = Color3.fromHex("#1e1e1e"),
+    DialogHolderLine = Color3.fromHex("#404040"),
+    DialogButton = Color3.fromHex("#242424"),
+    DialogButtonBorder = Color3.fromHex("#404040"),
+    DialogBorder = Color3.fromHex("#444444"),
+    DialogInput = Color3.fromHex("#242424"),
+    DialogInputLine = Color3.fromHex("#48b258"),
+
+    Text = Color3.fromHex("#dddddd"),
+    SubText = Color3.fromHex("#808080"),
+    Hover = Color3.fromHex("#2A2D2E"),
+    HoverChange = 0.05
+}
+end)() end,
+    [73] = function()local wax,script,require=ImportGlobals(73)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#007ACC"), -- activityBarBadge.background
 
     AcrylicMain = Color3.fromHex("#1E1E1E"), -- editor.background
@@ -61214,7 +61436,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [73] = function()local wax,script,require=ImportGlobals(73)local ImportGlobals return (function(...)return {
+    [74] = function()local wax,script,require=ImportGlobals(74)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#007ACC"), -- activityBarBadge.background
 
     AcrylicMain = Color3.fromHex("#FFFFFF"), -- editor.background
@@ -61261,7 +61483,7 @@ end)() end,
     HoverChange = 0.1
 } 
 end)() end,
-    [74] = function()local wax,script,require=ImportGlobals(74)local ImportGlobals return (function(...)return {
+    [75] = function()local wax,script,require=ImportGlobals(75)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#569cd6"), -- Based on keyword color
 
     AcrylicMain = Color3.fromHex("#000000"), -- editor.background
@@ -61308,7 +61530,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [75] = function()local wax,script,require=ImportGlobals(75)local ImportGlobals return (function(...)return {
+    [76] = function()local wax,script,require=ImportGlobals(76)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#0078D4"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#181818"), -- activityBar.background
@@ -61355,7 +61577,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [76] = function()local wax,script,require=ImportGlobals(76)local ImportGlobals return (function(...)return {
+    [77] = function()local wax,script,require=ImportGlobals(77)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#DCDCAA"), -- Based on function declarations color
 
     AcrylicMain = Color3.fromHex("#1E1E1E"), -- VS Code's default dark background
@@ -61402,7 +61624,7 @@ end)() end,
     HoverChange = 0.05
 }
 end)() end,
-    [77] = function()local wax,script,require=ImportGlobals(77)local ImportGlobals return (function(...)return {
+    [78] = function()local wax,script,require=ImportGlobals(78)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#5e2cbc"), -- Based on function color
 
     AcrylicMain = Color3.fromHex("#ffffff"), -- Light background
@@ -61449,7 +61671,7 @@ end)() end,
     HoverChange = 0.1
 } 
 end)() end,
-    [78] = function()local wax,script,require=ImportGlobals(78)local ImportGlobals return (function(...)return {
+    [79] = function()local wax,script,require=ImportGlobals(79)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#005FB8"), -- focusBorder
 
     AcrylicMain = Color3.fromHex("#F8F8F8"), -- activityBar.background
@@ -61496,7 +61718,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [79] = function()local wax,script,require=ImportGlobals(79)local ImportGlobals return (function(...)return {
+    [80] = function()local wax,script,require=ImportGlobals(80)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#795E26"), -- Function declarations color
 
     AcrylicMain = Color3.fromHex("#FFFFFF"), -- editor.background
@@ -61543,7 +61765,7 @@ end)() end,
     HoverChange = 0.1
 } 
 end)() end,
-    [80] = function()local wax,script,require=ImportGlobals(80)local ImportGlobals return (function(...)return {
+    [81] = function()local wax,script,require=ImportGlobals(81)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#cc3333"), -- badge.background
 
     AcrylicMain = Color3.fromHex("#580000"), -- activityBar.background
@@ -61590,7 +61812,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [81] = function()local wax,script,require=ImportGlobals(81)local ImportGlobals return (function(...)return {
+    [82] = function()local wax,script,require=ImportGlobals(82)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#7b36e2"),
 
     AcrylicMain = Color3.fromHex("#110e1a"),
@@ -61637,7 +61859,7 @@ end)() end,
     HoverChange = 0.05
 }
 end)() end,
-    [82] = function()local wax,script,require=ImportGlobals(82)local ImportGlobals return (function(...)return {
+    [83] = function()local wax,script,require=ImportGlobals(83)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#7b36e2"),
 
     AcrylicMain = Color3.fromHex("#110e1a"),
@@ -61684,7 +61906,7 @@ end)() end,
     HoverChange = 0.05
 }
 end)() end,
-    [83] = function()local wax,script,require=ImportGlobals(83)local ImportGlobals return (function(...)return {
+    [84] = function()local wax,script,require=ImportGlobals(84)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#165fb3"),
 
     AcrylicMain = Color3.fromHex("#21252b"),
@@ -61731,7 +61953,7 @@ end)() end,
     HoverChange = 0.05
 }
 end)() end,
-    [84] = function()local wax,script,require=ImportGlobals(84)local ImportGlobals return (function(...)return {
+    [85] = function()local wax,script,require=ImportGlobals(85)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#165fb3"),
 
     AcrylicMain = Color3.fromHex("#191c28"),
@@ -61778,7 +62000,7 @@ end)() end,
     HoverChange = 0.05
 }
 end)() end,
-    [85] = function()local wax,script,require=ImportGlobals(85)local ImportGlobals return (function(...)return {
+    [86] = function()local wax,script,require=ImportGlobals(86)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#0f96ff"),
 
     AcrylicMain = Color3.fromHex("#ffffff"),
@@ -61825,7 +62047,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [86] = function()local wax,script,require=ImportGlobals(86)local ImportGlobals return (function(...)return {
+    [87] = function()local wax,script,require=ImportGlobals(87)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#e32b00"),
 
     AcrylicMain = Color3.fromHex("#130c0f"),
@@ -61872,7 +62094,7 @@ end)() end,
     HoverChange = 0.05
 }
 end)() end,
-    [87] = function()local wax,script,require=ImportGlobals(87)local ImportGlobals return (function(...)return {
+    [88] = function()local wax,script,require=ImportGlobals(88)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#1591ff"),
 
     AcrylicMain = Color3.fromHex("#202432"),
@@ -61919,7 +62141,7 @@ end)() end,
     HoverChange = 0.05
 }
 end)() end,
-    [88] = function()local wax,script,require=ImportGlobals(88)local ImportGlobals return (function(...)return {
+    [89] = function()local wax,script,require=ImportGlobals(89)local ImportGlobals return (function(...)return {
 	Accent = Color3.fromRGB(90, 235, 45),
 
 	AcrylicMain = Color3.fromRGB(30, 30, 30),
@@ -61969,7 +62191,7 @@ end)() end,
 	HoverChange = 0.07
 }
 end)() end,
-    [89] = function()local wax,script,require=ImportGlobals(89)local ImportGlobals return (function(...)return {
+    [90] = function()local wax,script,require=ImportGlobals(90)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#e95420"),
 
     AcrylicMain = Color3.fromHex("#383838"),
@@ -62016,7 +62238,7 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [90] = function()local wax,script,require=ImportGlobals(90)local ImportGlobals return (function(...)return {
+    [91] = function()local wax,script,require=ImportGlobals(91)local ImportGlobals return (function(...)return {
     Accent = Color3.fromHex("#e95420"),
 
     AcrylicMain = Color3.fromHex("#edeef0"),
@@ -62063,16 +62285,16 @@ end)() end,
     HoverChange = 0.1
 }
 end)() end,
-    [92] = function()local wax,script,require=ImportGlobals(92)local ImportGlobals return (function(...)return require(script.Parent._Index["reselim_flipper@2.0.0"]["flipper"])
+    [93] = function()local wax,script,require=ImportGlobals(93)local ImportGlobals return (function(...)return require(script.Parent._Index["reselim_flipper@2.0.0"]["flipper"])
 
 end)() end,
-    [93] = function()local wax,script,require=ImportGlobals(93)local ImportGlobals return (function(...)return require(script.Parent._Index["littensy_ripple@0.9.3"]["ripple"])
+    [94] = function()local wax,script,require=ImportGlobals(94)local ImportGlobals return (function(...)return require(script.Parent._Index["littensy_ripple@0.9.3"]["ripple"])
 
 end)() end,
-    [94] = function()local wax,script,require=ImportGlobals(94)local ImportGlobals return (function(...)return require(script.Parent._Index["lucasmzreal_fastsignal@10.4.0"]["fastsignal"])
+    [95] = function()local wax,script,require=ImportGlobals(95)local ImportGlobals return (function(...)return require(script.Parent._Index["lucasmzreal_fastsignal@10.4.0"]["fastsignal"])
 
 end)() end,
-    [97] = function()local wax,script,require=ImportGlobals(97)local ImportGlobals return (function(...)--[[
+    [98] = function()local wax,script,require=ImportGlobals(98)local ImportGlobals return (function(...)--[[
 	An implementation of Promises similar to Promise/A+.
 ]]
 
@@ -64142,7 +64364,7 @@ end
 return Promise
 
 end)() end,
-    [98] = function()local wax,script,require=ImportGlobals(98)local ImportGlobals return (function(...)return function()
+    [99] = function()local wax,script,require=ImportGlobals(99)local ImportGlobals return (function(...)return function()
 	local Promise = require(script.Parent)
 	Promise.TEST = true
 
@@ -65988,10 +66210,10 @@ end)() end,
 end
 
 end)() end,
-    [100] = function()local wax,script,require=ImportGlobals(100)local ImportGlobals return (function(...)return require(script.Parent.Parent["evaera_promise@4.0.0"]["promise"])
+    [101] = function()local wax,script,require=ImportGlobals(101)local ImportGlobals return (function(...)return require(script.Parent.Parent["evaera_promise@4.0.0"]["promise"])
 
 end)() end,
-    [101] = function()local wax,script,require=ImportGlobals(101)local ImportGlobals return (function(...)local types = require(script.types)
+    [102] = function()local wax,script,require=ImportGlobals(102)local ImportGlobals return (function(...)local types = require(script.types)
 
 export type Motion<T = number> = types.Motion<T>
 
@@ -66015,7 +66237,7 @@ return {
 }
 
 end)() end,
-    [102] = function()local wax,script,require=ImportGlobals(102)local ImportGlobals return (function(...)local config = {
+    [103] = function()local wax,script,require=ImportGlobals(103)local ImportGlobals return (function(...)local config = {
 	spring = {
 		default = { tension = 170, friction = 26 },
 		gentle = { tension = 120, friction = 14 },
@@ -66044,7 +66266,7 @@ end)() end,
 return config
 
 end)() end,
-    [103] = function()local wax,script,require=ImportGlobals(103)local ImportGlobals return (function(...)local RunService = game:GetService("RunService")
+    [104] = function()local wax,script,require=ImportGlobals(104)local ImportGlobals return (function(...)local RunService = game:GetService("RunService")
 
 local types = require(script.Parent.types)
 local immediateSolver = require(script.Parent.solvers.immediate)
@@ -66354,7 +66576,7 @@ end
 return createMotion
 
 end)() end,
-    [104] = function()local wax,script,require=ImportGlobals(104)local ImportGlobals return (function(...)return function()
+    [105] = function()local wax,script,require=ImportGlobals(105)local ImportGlobals return (function(...)return function()
 	local types = require(script.Parent.types)
 	local createMotion = require(script.Parent.createMotion)
 	local linear = require(script.Parent.solvers.linear)
@@ -66682,7 +66904,7 @@ end)() end,
 end
 
 end)() end,
-    [106] = function()local wax,script,require=ImportGlobals(106)local ImportGlobals return (function(...)local types = require(script.Parent.Parent.types)
+    [107] = function()local wax,script,require=ImportGlobals(107)local ImportGlobals return (function(...)local types = require(script.Parent.Parent.types)
 local intermediate = require(script.Parent.Parent.utils.intermediate)
 
 local function immediate(motionGoal: types.MotionGoal): types.MotionSolver
@@ -66703,7 +66925,7 @@ end
 return immediate
 
 end)() end,
-    [107] = function()local wax,script,require=ImportGlobals(107)local ImportGlobals return (function(...)return function()
+    [108] = function()local wax,script,require=ImportGlobals(108)local ImportGlobals return (function(...)return function()
 	local createMotion = require(script.Parent.Parent.createMotion)
 	local immediate = require(script.Parent.immediate)
 
@@ -66799,7 +67021,7 @@ end)() end,
 end
 
 end)() end,
-    [108] = function()local wax,script,require=ImportGlobals(108)local ImportGlobals return (function(...)local types = require(script.Parent.Parent.types)
+    [109] = function()local wax,script,require=ImportGlobals(109)local ImportGlobals return (function(...)local types = require(script.Parent.Parent.types)
 local config = require(script.Parent.Parent.config)
 local intermediate = require(script.Parent.Parent.utils.intermediate)
 
@@ -66838,7 +67060,7 @@ end
 return linear
 
 end)() end,
-    [109] = function()local wax,script,require=ImportGlobals(109)local ImportGlobals return (function(...)return function()
+    [110] = function()local wax,script,require=ImportGlobals(110)local ImportGlobals return (function(...)return function()
 	local createMotion = require(script.Parent.Parent.createMotion)
 	local linear = require(script.Parent.linear)
 
@@ -66914,7 +67136,7 @@ end)() end,
 end
 
 end)() end,
-    [110] = function()local wax,script,require=ImportGlobals(110)local ImportGlobals return (function(...)local types = require(script.Parent.Parent.types)
+    [111] = function()local wax,script,require=ImportGlobals(111)local ImportGlobals return (function(...)local types = require(script.Parent.Parent.types)
 local config = require(script.Parent.Parent.config)
 local intermediate = require(script.Parent.Parent.utils.intermediate)
 
@@ -66990,7 +67212,7 @@ end
 return spring
 
 end)() end,
-    [111] = function()local wax,script,require=ImportGlobals(111)local ImportGlobals return (function(...)return function()
+    [112] = function()local wax,script,require=ImportGlobals(112)local ImportGlobals return (function(...)return function()
 	local createMotion = require(script.Parent.Parent.createMotion)
 	local snapshot = require(script.Parent.Parent.utils.snapshot)
 	local spring = require(script.Parent.spring)
@@ -67084,7 +67306,7 @@ end)() end,
 end
 
 end)() end,
-    [112] = function()local wax,script,require=ImportGlobals(112)local ImportGlobals return (function(...)local TweenService = game:GetService("TweenService")
+    [113] = function()local wax,script,require=ImportGlobals(113)local ImportGlobals return (function(...)local TweenService = game:GetService("TweenService")
 
 local types = require(script.Parent.Parent.types)
 local config = require(script.Parent.Parent.config)
@@ -67167,7 +67389,7 @@ end
 return tween
 
 end)() end,
-    [113] = function()local wax,script,require=ImportGlobals(113)local ImportGlobals return (function(...)return function()
+    [114] = function()local wax,script,require=ImportGlobals(114)local ImportGlobals return (function(...)return function()
 	local createMotion = require(script.Parent.Parent.createMotion)
 	local tween = require(script.Parent.tween)
 
@@ -67232,7 +67454,7 @@ end)() end,
 end
 
 end)() end,
-    [114] = function()local wax,script,require=ImportGlobals(114)local ImportGlobals return (function(...)type Cleanup = () -> ()
+    [115] = function()local wax,script,require=ImportGlobals(115)local ImportGlobals return (function(...)type Cleanup = () -> ()
 
 export type Heartbeat = {
 	Connect: (self: Heartbeat, callback: (deltaTime: number) -> ()) -> Disconnectable,
@@ -67311,7 +67533,7 @@ export type MotionGoal = { [any]: number } | number | UDim2 | UDim | Vector2 | V
 return nil
 
 end)() end,
-    [116] = function()local wax,script,require=ImportGlobals(116)local ImportGlobals return (function(...)local function assign<T>(object: T, ...: { [any]: any }): T
+    [117] = function()local wax,script,require=ImportGlobals(117)local ImportGlobals return (function(...)local function assign<T>(object: T, ...: { [any]: any }): T
 	assert(type(object) == "table", `Expected a table for first argument, got ${type(object)}`)
 
 	for index = 1, select("#", ...) do
@@ -67328,7 +67550,7 @@ end
 return assign
 
 end)() end,
-    [117] = function()local wax,script,require=ImportGlobals(117)local ImportGlobals return (function(...)type Intermediate = { [any]: number }
+    [118] = function()local wax,script,require=ImportGlobals(118)local ImportGlobals return (function(...)type Intermediate = { [any]: number }
 
 local intermediates = {
 	number = {
@@ -67433,7 +67655,7 @@ return {
 }
 
 end)() end,
-    [118] = function()local wax,script,require=ImportGlobals(118)local ImportGlobals return (function(...)local function merge<T, U>(a: T & { [any]: any }, b: U & { [any]: any }): T & U
+    [119] = function()local wax,script,require=ImportGlobals(119)local ImportGlobals return (function(...)local function merge<T, U>(a: T & { [any]: any }, b: U & { [any]: any }): T & U
 	local copy = table.clone(a)
 
 	for key, value in pairs(b) do
@@ -67446,7 +67668,7 @@ end
 return merge
 
 end)() end,
-    [119] = function()local wax,script,require=ImportGlobals(119)local ImportGlobals return (function(...)local HttpService = game:GetService("HttpService")
+    [120] = function()local wax,script,require=ImportGlobals(120)local ImportGlobals return (function(...)local HttpService = game:GetService("HttpService")
 
 local types = require(script.Parent.Parent.types)
 local createMotion = require(script.Parent.Parent.createMotion)
@@ -67495,7 +67717,7 @@ return {
 }
 
 end)() end,
-    [120] = function()local wax,script,require=ImportGlobals(120)local ImportGlobals return (function(...)type Spy = {
+    [121] = function()local wax,script,require=ImportGlobals(121)local ImportGlobals return (function(...)type Spy = {
 	calls: number,
 	arguments: { { unknown } },
 	handle: (...any) -> (),
@@ -67521,7 +67743,7 @@ end
 return spy
 
 end)() end,
-    [122] = function()local wax,script,require=ImportGlobals(122)local ImportGlobals return (function(...)--!nocheck
+    [123] = function()local wax,script,require=ImportGlobals(123)local ImportGlobals return (function(...)--!nocheck
 --!optimize 2
 --!native
 
@@ -67575,7 +67797,7 @@ local ChosenSignal: typeof( require(script.Docs) ) = IsDeferred
 
 return ChosenSignal
 end)() end,
-    [123] = function()local wax,script,require=ImportGlobals(123)local ImportGlobals return (function(...)--!optimize 2
+    [124] = function()local wax,script,require=ImportGlobals(124)local ImportGlobals return (function(...)--!optimize 2
 --!native
 
 export type ScriptSignal<T...> = {
@@ -67765,7 +67987,7 @@ ScriptConnection.Destroy = ScriptConnection.Disconnect
 
 return ScriptSignal :: typeof( require(script.Parent.Docs) )
 end)() end,
-    [124] = function()local wax,script,require=ImportGlobals(124)local ImportGlobals return (function(...)--[[
+    [125] = function()local wax,script,require=ImportGlobals(125)local ImportGlobals return (function(...)--[[
 	Meant to hold docs. Makes it easier to mess with them individually.
 ]]
 
@@ -68000,7 +68222,7 @@ end
 
 return returnType
 end)() end,
-    [125] = function()local wax,script,require=ImportGlobals(125)local ImportGlobals return (function(...)--!optimize 2
+    [126] = function()local wax,script,require=ImportGlobals(126)local ImportGlobals return (function(...)--!optimize 2
 --!native
 
 export type ScriptSignal<T...> = {
@@ -68079,7 +68301,7 @@ end
 
 return ScriptSignal :: typeof( require(script.Parent.Docs) )
 end)() end,
-    [126] = function()local wax,script,require=ImportGlobals(126)local ImportGlobals return (function(...)--[[
+    [127] = function()local wax,script,require=ImportGlobals(127)local ImportGlobals return (function(...)--[[
 	FastSignal has 3 editions.
 
 		* Adaptive
@@ -68109,7 +68331,7 @@ end)() end,
 
 return error("Not meant to run.")
 end)() end,
-    [127] = function()local wax,script,require=ImportGlobals(127)local ImportGlobals return (function(...)return {
+    [128] = function()local wax,script,require=ImportGlobals(128)local ImportGlobals return (function(...)return {
 	package = {
 		authors = {"RBLXUtils", "LucasMZReal"},
 		description = "FastSignal is a signal library made with consistency and expectable behaviour in mind, it is efficient, easy to use, and widely compatible.",
@@ -68121,227 +68343,7 @@ end)() end,
 	},
 }
 end)() end,
-    [129] = function()local wax,script,require=ImportGlobals(129)local ImportGlobals return (function(...)local Flipper = {
-	SingleMotor = require(script.SingleMotor),
-	GroupMotor = require(script.GroupMotor),
-
-	Instant = require(script.Instant),
-	Linear = require(script.Linear),
-	Spring = require(script.Spring),
-	
-	isMotor = require(script.isMotor),
-}
-
-return Flipper
-end)() end,
-    [130] = function()local wax,script,require=ImportGlobals(130)local ImportGlobals return (function(...)local RunService = game:GetService("RunService")
-
-local Signal = require(script.Parent.Signal)
-
-local noop = function() end
-
-local BaseMotor = {}
-BaseMotor.__index = BaseMotor
-
-function BaseMotor.new()
-	return setmetatable({
-		_onStep = Signal.new(),
-		_onStart = Signal.new(),
-		_onComplete = Signal.new(),
-	}, BaseMotor)
-end
-
-function BaseMotor:onStep(handler)
-	return self._onStep:connect(handler)
-end
-
-function BaseMotor:onStart(handler)
-	return self._onStart:connect(handler)
-end
-
-function BaseMotor:onComplete(handler)
-	return self._onComplete:connect(handler)
-end
-
-function BaseMotor:start()
-	if not self._connection then
-		self._connection = RunService.RenderStepped:Connect(function(deltaTime)
-			self:step(deltaTime)
-		end)
-	end
-end
-
-function BaseMotor:stop()
-	if self._connection then
-		self._connection:Disconnect()
-		self._connection = nil
-	end
-end
-
-BaseMotor.destroy = BaseMotor.stop
-
-BaseMotor.step = noop
-BaseMotor.getValue = noop
-BaseMotor.setGoal = noop
-
-function BaseMotor:__tostring()
-	return "Motor"
-end
-
-return BaseMotor
-
-end)() end,
-    [131] = function()local wax,script,require=ImportGlobals(131)local ImportGlobals return (function(...)return function()
-	local RunService = game:GetService("RunService")
-
-	local BaseMotor = require(script.Parent.BaseMotor)
-
-	describe("connection management", function()
-		local motor = BaseMotor.new()
-
-		it("should hook up connections on :start()", function()
-			motor:start()
-			expect(typeof(motor._connection)).to.equal("RBXScriptConnection")
-		end)
-
-		it("should remove connections on :stop() or :destroy()", function()
-			motor:stop()
-			expect(motor._connection).to.equal(nil)
-		end)
-	end)
-
-	it("should call :step() with deltaTime", function()
-		local motor = BaseMotor.new()
-
-		local argumentsProvided
-		function motor:step(...)
-			argumentsProvided = { ... }
-			motor:stop()
-		end
-
-		motor:start()
-		
-		local expectedDeltaTime = RunService.RenderStepped:Wait()
-
-		-- Give it another frame, because connections tend to be invoked later than :Wait() calls
-		RunService.RenderStepped:Wait()
-
-		expect(argumentsProvided).to.be.ok()
-		expect(argumentsProvided[1]).to.equal(expectedDeltaTime)
-	end)
-end
-
-end)() end,
-    [132] = function()local wax,script,require=ImportGlobals(132)local ImportGlobals return (function(...)local BaseMotor = require(script.Parent.BaseMotor)
-local SingleMotor = require(script.Parent.SingleMotor)
-
-local isMotor = require(script.Parent.isMotor)
-
-local GroupMotor = setmetatable({}, BaseMotor)
-GroupMotor.__index = GroupMotor
-
-local function toMotor(value)
-	if isMotor(value) then
-		return value
-	end
-
-	local valueType = typeof(value)
-
-	if valueType == "number" then
-		return SingleMotor.new(value, false)
-	elseif valueType == "table" then
-		return GroupMotor.new(value, false)
-	end
-
-	error(("Unable to convert %q to motor; type %s is unsupported"):format(value, valueType), 2)
-end
-
-function GroupMotor.new(initialValues, useImplicitConnections)
-	assert(initialValues, "Missing argument #1: initialValues")
-	assert(typeof(initialValues) == "table", "initialValues must be a table!")
-	assert(not initialValues.step, "initialValues contains disallowed property \"step\". Did you mean to put a table of values here?")
-
-	local self = setmetatable(BaseMotor.new(), GroupMotor)
-
-	if useImplicitConnections ~= nil then
-		self._useImplicitConnections = useImplicitConnections
-	else
-		self._useImplicitConnections = true
-	end
-
-	self._complete = true
-	self._motors = {}
-
-	for key, value in pairs(initialValues) do
-		self._motors[key] = toMotor(value)
-	end
-
-	return self
-end
-
-function GroupMotor:step(deltaTime)
-	if self._complete then
-		return true
-	end
-
-	local allMotorsComplete = true
-
-	for _, motor in pairs(self._motors) do
-		local complete = motor:step(deltaTime)
-		if not complete then
-			-- If any of the sub-motors are incomplete, the group motor will not be complete either
-			allMotorsComplete = false
-		end
-	end
-
-	self._onStep:fire(self:getValue())
-
-	if allMotorsComplete then
-		if self._useImplicitConnections then
-			self:stop()
-		end
-
-		self._complete = true
-		self._onComplete:fire()
-	end
-
-	return allMotorsComplete
-end
-
-function GroupMotor:setGoal(goals)
-	assert(not goals.step, "goals contains disallowed property \"step\". Did you mean to put a table of goals here?")
-
-	self._complete = false
-	self._onStart:fire()
-
-	for key, goal in pairs(goals) do
-		local motor = assert(self._motors[key], ("Unknown motor for key %s"):format(key))
-		motor:setGoal(goal)
-	end
-
-	if self._useImplicitConnections then
-		self:start()
-	end
-end
-
-function GroupMotor:getValue()
-	local values = {}
-
-	for key, motor in pairs(self._motors) do
-		values[key] = motor:getValue()
-	end
-
-	return values
-end
-
-function GroupMotor:__tostring()
-	return "Motor(Group)"
-end
-
-return GroupMotor
-
-end)() end,
-    [133] = function()local wax,script,require=ImportGlobals(133)local ImportGlobals return (function(...)return function()
+    [134] = function()local wax,script,require=ImportGlobals(134)local ImportGlobals return (function(...)return function()
 	local GroupMotor = require(script.Parent.GroupMotor)
 
 	local Instant = require(script.Parent.Instant)
@@ -68426,190 +68428,7 @@ end)() end,
 end
 
 end)() end,
-    [134] = function()local wax,script,require=ImportGlobals(134)local ImportGlobals return (function(...)local Instant = {}
-Instant.__index = Instant
-
-function Instant.new(targetValue)
-	return setmetatable({
-		_targetValue = targetValue,
-	}, Instant)
-end
-
-function Instant:step()
-	return {
-		complete = true,
-		value = self._targetValue,
-	}
-end
-
-return Instant
-end)() end,
-    [135] = function()local wax,script,require=ImportGlobals(135)local ImportGlobals return (function(...)return function()
-	local Instant = require(script.Parent.Instant)
-
-	it("should return a completed state with the provided value", function()
-		local goal = Instant.new(1.23)
-		local state = goal:step(0.1, { value = 0, complete = false })
-		expect(state.complete).to.equal(true)
-		expect(state.value).to.equal(1.23)
-	end)
-end
-end)() end,
-    [136] = function()local wax,script,require=ImportGlobals(136)local ImportGlobals return (function(...)local Linear = {}
-Linear.__index = Linear
-
-function Linear.new(targetValue, options)
-	assert(targetValue, "Missing argument #1: targetValue")
-	
-	options = options or {}
-
-	return setmetatable({
-		_targetValue = targetValue,
-		_velocity = options.velocity or 1,
-	}, Linear)
-end
-
-function Linear:step(state, dt)
-	local position = state.value
-	local velocity = self._velocity -- Linear motion ignores the state's velocity
-	local goal = self._targetValue
-
-	local dPos = dt * velocity
-
-	local complete = dPos >= math.abs(goal - position)
-	position = position + dPos * (goal > position and 1 or -1)
-	if complete then
-		position = self._targetValue
-		velocity = 0
-	end
-	
-	return {
-		complete = complete,
-		value = position,
-		velocity = velocity,
-	}
-end
-
-return Linear
-end)() end,
-    [137] = function()local wax,script,require=ImportGlobals(137)local ImportGlobals return (function(...)return function()
-	local SingleMotor = require(script.Parent.SingleMotor)
-	local Linear = require(script.Parent.Linear)
-
-	describe("completed state", function()
-		local motor = SingleMotor.new(0, false)
-
-		local goal = Linear.new(1, { velocity = 1 })
-		motor:setGoal(goal)
-	
-		for _ = 1, 60 do
-			motor:step(1/60)
-		end
-		
-		it("should complete", function()
-			expect(motor._state.complete).to.equal(true)
-		end)
-
-		it("should be exactly the goal value when completed", function()
-			expect(motor._state.value).to.equal(1)
-		end)
-	end)
-
-	describe("uncompleted state", function()
-		local motor = SingleMotor.new(0, false)
-
-		local goal = Linear.new(1, { velocity = 1 })
-		motor:setGoal(goal)
-	
-		for _ = 1, 59 do
-			motor:step(1/60)
-		end
-		
-		it("should be uncomplete", function()
-			expect(motor._state.complete).to.equal(false)
-		end)
-	end)
-
-	describe("negative velocity", function()
-		local motor = SingleMotor.new(1, false)
-
-		local goal = Linear.new(0, { velocity = 1 })
-		motor:setGoal(goal)
-		
-		for _ = 1, 60 do
-			motor:step(1/60)
-		end
-		
-		it("should complete", function()
-			expect(motor._state.complete).to.equal(true)
-		end)
-
-		it("should be exactly the goal value when completed", function()
-			expect(motor._state.value).to.equal(0)
-		end)
-	end)
-end
-end)() end,
-    [138] = function()local wax,script,require=ImportGlobals(138)local ImportGlobals return (function(...)local Connection = {}
-Connection.__index = Connection
-
-function Connection.new(signal, handler)
-	return setmetatable({
-		signal = signal,
-		connected = true,
-		_handler = handler,
-	}, Connection)
-end
-
-function Connection:disconnect()
-	if self.connected then
-		self.connected = false
-
-		for index, connection in pairs(self.signal._connections) do
-			if connection == self then
-				table.remove(self.signal._connections, index)
-				return
-			end
-		end
-	end
-end
-
-local Signal = {}
-Signal.__index = Signal
-
-function Signal.new()
-	return setmetatable({
-		_connections = {},
-		_threads = {},
-	}, Signal)
-end
-
-function Signal:fire(...)
-	for _, connection in pairs(self._connections) do
-		connection._handler(...)
-	end
-
-	for _, thread in pairs(self._threads) do
-		coroutine.resume(thread, ...)
-	end
-	
-	self._threads = {}
-end
-
-function Signal:connect(handler)
-	local connection = Connection.new(self, handler)
-	table.insert(self._connections, connection)
-	return connection
-end
-
-function Signal:wait()
-	table.insert(self._threads, coroutine.running())
-	return coroutine.yield()
-end
-
-return Signal
-end)() end,
-    [139] = function()local wax,script,require=ImportGlobals(139)local ImportGlobals return (function(...)return function()
+    [140] = function()local wax,script,require=ImportGlobals(140)local ImportGlobals return (function(...)return function()
 	local Signal = require(script.Parent.Signal)
 
 	it("should invoke all connections, instantly", function()
@@ -68659,123 +68478,7 @@ end)() end,
 	end)
 end
 end)() end,
-    [140] = function()local wax,script,require=ImportGlobals(140)local ImportGlobals return (function(...)local BaseMotor = require(script.Parent.BaseMotor)
-
-local SingleMotor = setmetatable({}, BaseMotor)
-SingleMotor.__index = SingleMotor
-
-function SingleMotor.new(initialValue, useImplicitConnections)
-	assert(initialValue, "Missing argument #1: initialValue")
-	assert(typeof(initialValue) == "number", "initialValue must be a number!")
-
-	local self = setmetatable(BaseMotor.new(), SingleMotor)
-
-	if useImplicitConnections ~= nil then
-		self._useImplicitConnections = useImplicitConnections
-	else
-		self._useImplicitConnections = true
-	end
-
-	self._goal = nil
-	self._state = {
-		complete = true,
-		value = initialValue,
-	}
-
-	return self
-end
-
-function SingleMotor:step(deltaTime)
-	if self._state.complete then
-		return true
-	end
-
-	local newState = self._goal:step(self._state, deltaTime)
-
-	self._state = newState
-	self._onStep:fire(newState.value)
-
-	if newState.complete then
-		if self._useImplicitConnections then
-			self:stop()
-		end
-
-		self._onComplete:fire()
-	end
-
-	return newState.complete
-end
-
-function SingleMotor:getValue()
-	return self._state.value
-end
-
-function SingleMotor:setGoal(goal)
-	self._state.complete = false
-	self._goal = goal
-
-	self._onStart:fire()
-
-	if self._useImplicitConnections then
-		self:start()
-	end
-end
-
-function SingleMotor:__tostring()
-	return "Motor(Single)"
-end
-
-return SingleMotor
-
-end)() end,
-    [141] = function()local wax,script,require=ImportGlobals(141)local ImportGlobals return (function(...)return function()
-	local SingleMotor = require(script.Parent.SingleMotor)
-	local Instant = require(script.Parent.Instant)
-
-	it("should assign new state on step", function()
-		local motor = SingleMotor.new(0, false)
-
-		motor:setGoal(Instant.new(5))
-		motor:step(1/60)
-
-		expect(motor._state.complete).to.equal(true)
-		expect(motor._state.value).to.equal(5)
-	end)
-
-	it("should invoke onComplete listeners when the goal is completed", function()
-		local motor = SingleMotor.new(0, false)
-
-		local didComplete = false
-		motor:onComplete(function()
-			didComplete = true
-		end)
-
-		motor:setGoal(Instant.new(5))
-		motor:step(1/60)
-
-		expect(didComplete).to.equal(true)
-	end)
-
-	it("should start when the goal is set", function()
-		local motor = SingleMotor.new(0, false)
-
-		local bool = false
-		motor:onStart(function()
-			bool = not bool
-		end)
-
-		motor:setGoal(Instant.new(5))
-
-		expect(bool).to.equal(true)
-
-		motor:setGoal(Instant.new(5))
-
-		expect(bool).to.equal(false)
-	end)
-end
-
-end)() end,
-    [142] = function()local wax,script,require=ImportGlobals(142)local ImportGlobals return (function(...)local VELOCITY_THRESHOLD = 0.001
+    [143] = function()local wax,script,require=ImportGlobals(143)local ImportGlobals return (function(...)local VELOCITY_THRESHOLD = 0.001
 local POSITION_THRESHOLD = 0.001
 
 local EPS = 0.0001
@@ -68884,7 +68587,279 @@ end
 
 return Spring
 end)() end,
-    [143] = function()local wax,script,require=ImportGlobals(143)local ImportGlobals return (function(...)return function()
+    [137] = function()local wax,script,require=ImportGlobals(137)local ImportGlobals return (function(...)local Linear = {}
+Linear.__index = Linear
+
+function Linear.new(targetValue, options)
+	assert(targetValue, "Missing argument #1: targetValue")
+	
+	options = options or {}
+
+	return setmetatable({
+		_targetValue = targetValue,
+		_velocity = options.velocity or 1,
+	}, Linear)
+end
+
+function Linear:step(state, dt)
+	local position = state.value
+	local velocity = self._velocity -- Linear motion ignores the state's velocity
+	local goal = self._targetValue
+
+	local dPos = dt * velocity
+
+	local complete = dPos >= math.abs(goal - position)
+	position = position + dPos * (goal > position and 1 or -1)
+	if complete then
+		position = self._targetValue
+		velocity = 0
+	end
+	
+	return {
+		complete = complete,
+		value = position,
+		velocity = velocity,
+	}
+end
+
+return Linear
+end)() end,
+    [138] = function()local wax,script,require=ImportGlobals(138)local ImportGlobals return (function(...)return function()
+	local SingleMotor = require(script.Parent.SingleMotor)
+	local Linear = require(script.Parent.Linear)
+
+	describe("completed state", function()
+		local motor = SingleMotor.new(0, false)
+
+		local goal = Linear.new(1, { velocity = 1 })
+		motor:setGoal(goal)
+	
+		for _ = 1, 60 do
+			motor:step(1/60)
+		end
+		
+		it("should complete", function()
+			expect(motor._state.complete).to.equal(true)
+		end)
+
+		it("should be exactly the goal value when completed", function()
+			expect(motor._state.value).to.equal(1)
+		end)
+	end)
+
+	describe("uncompleted state", function()
+		local motor = SingleMotor.new(0, false)
+
+		local goal = Linear.new(1, { velocity = 1 })
+		motor:setGoal(goal)
+	
+		for _ = 1, 59 do
+			motor:step(1/60)
+		end
+		
+		it("should be uncomplete", function()
+			expect(motor._state.complete).to.equal(false)
+		end)
+	end)
+
+	describe("negative velocity", function()
+		local motor = SingleMotor.new(1, false)
+
+		local goal = Linear.new(0, { velocity = 1 })
+		motor:setGoal(goal)
+		
+		for _ = 1, 60 do
+			motor:step(1/60)
+		end
+		
+		it("should complete", function()
+			expect(motor._state.complete).to.equal(true)
+		end)
+
+		it("should be exactly the goal value when completed", function()
+			expect(motor._state.value).to.equal(0)
+		end)
+	end)
+end
+end)() end,
+    [132] = function()local wax,script,require=ImportGlobals(132)local ImportGlobals return (function(...)return function()
+	local RunService = game:GetService("RunService")
+
+	local BaseMotor = require(script.Parent.BaseMotor)
+
+	describe("connection management", function()
+		local motor = BaseMotor.new()
+
+		it("should hook up connections on :start()", function()
+			motor:start()
+			expect(typeof(motor._connection)).to.equal("RBXScriptConnection")
+		end)
+
+		it("should remove connections on :stop() or :destroy()", function()
+			motor:stop()
+			expect(motor._connection).to.equal(nil)
+		end)
+	end)
+
+	it("should call :step() with deltaTime", function()
+		local motor = BaseMotor.new()
+
+		local argumentsProvided
+		function motor:step(...)
+			argumentsProvided = { ... }
+			motor:stop()
+		end
+
+		motor:start()
+		
+		local expectedDeltaTime = RunService.RenderStepped:Wait()
+
+		-- Give it another frame, because connections tend to be invoked later than :Wait() calls
+		RunService.RenderStepped:Wait()
+
+		expect(argumentsProvided).to.be.ok()
+		expect(argumentsProvided[1]).to.equal(expectedDeltaTime)
+	end)
+end
+
+end)() end,
+    [146] = function()local wax,script,require=ImportGlobals(146)local ImportGlobals return (function(...)return function()
+	local isMotor = require(script.Parent.isMotor)
+
+	local SingleMotor = require(script.Parent.SingleMotor)
+	local GroupMotor = require(script.Parent.GroupMotor)
+
+	local singleMotor = SingleMotor.new(0)
+	local groupMotor = GroupMotor.new({})
+
+	it("should properly detect motors", function()
+		expect(isMotor(singleMotor)).to.equal(true)
+		expect(isMotor(groupMotor)).to.equal(true)
+	end)
+
+	it("shouldn't detect things that aren't motors", function()
+		expect(isMotor({})).to.equal(false)
+	end)
+
+	it("should return the proper motor type", function()
+		local _, singleMotorType = isMotor(singleMotor)
+		local _, groupMotorType = isMotor(groupMotor)
+
+		expect(singleMotorType).to.equal("Single")
+		expect(groupMotorType).to.equal("Group")
+	end)
+end
+end)() end,
+    [133] = function()local wax,script,require=ImportGlobals(133)local ImportGlobals return (function(...)local BaseMotor = require(script.Parent.BaseMotor)
+local SingleMotor = require(script.Parent.SingleMotor)
+
+local isMotor = require(script.Parent.isMotor)
+
+local GroupMotor = setmetatable({}, BaseMotor)
+GroupMotor.__index = GroupMotor
+
+local function toMotor(value)
+	if isMotor(value) then
+		return value
+	end
+
+	local valueType = typeof(value)
+
+	if valueType == "number" then
+		return SingleMotor.new(value, false)
+	elseif valueType == "table" then
+		return GroupMotor.new(value, false)
+	end
+
+	error(("Unable to convert %q to motor; type %s is unsupported"):format(value, valueType), 2)
+end
+
+function GroupMotor.new(initialValues, useImplicitConnections)
+	assert(initialValues, "Missing argument #1: initialValues")
+	assert(typeof(initialValues) == "table", "initialValues must be a table!")
+	assert(not initialValues.step, "initialValues contains disallowed property \"step\". Did you mean to put a table of values here?")
+
+	local self = setmetatable(BaseMotor.new(), GroupMotor)
+
+	if useImplicitConnections ~= nil then
+		self._useImplicitConnections = useImplicitConnections
+	else
+		self._useImplicitConnections = true
+	end
+
+	self._complete = true
+	self._motors = {}
+
+	for key, value in pairs(initialValues) do
+		self._motors[key] = toMotor(value)
+	end
+
+	return self
+end
+
+function GroupMotor:step(deltaTime)
+	if self._complete then
+		return true
+	end
+
+	local allMotorsComplete = true
+
+	for _, motor in pairs(self._motors) do
+		local complete = motor:step(deltaTime)
+		if not complete then
+			-- If any of the sub-motors are incomplete, the group motor will not be complete either
+			allMotorsComplete = false
+		end
+	end
+
+	self._onStep:fire(self:getValue())
+
+	if allMotorsComplete then
+		if self._useImplicitConnections then
+			self:stop()
+		end
+
+		self._complete = true
+		self._onComplete:fire()
+	end
+
+	return allMotorsComplete
+end
+
+function GroupMotor:setGoal(goals)
+	assert(not goals.step, "goals contains disallowed property \"step\". Did you mean to put a table of goals here?")
+
+	self._complete = false
+	self._onStart:fire()
+
+	for key, goal in pairs(goals) do
+		local motor = assert(self._motors[key], ("Unknown motor for key %s"):format(key))
+		motor:setGoal(goal)
+	end
+
+	if self._useImplicitConnections then
+		self:start()
+	end
+end
+
+function GroupMotor:getValue()
+	local values = {}
+
+	for key, motor in pairs(self._motors) do
+		values[key] = motor:getValue()
+	end
+
+	return values
+end
+
+function GroupMotor:__tostring()
+	return "Motor(Group)"
+end
+
+return GroupMotor
+
+end)() end,
+    [144] = function()local wax,script,require=ImportGlobals(144)local ImportGlobals return (function(...)return function()
 	local SingleMotor = require(script.Parent.SingleMotor)
 	local Spring = require(script.Parent.Spring)
 
@@ -68920,7 +68895,281 @@ end)() end,
 	end)
 end
 end)() end,
-    [144] = function()local wax,script,require=ImportGlobals(144)local ImportGlobals return (function(...)local function isMotor(value)
+    [130] = function()local wax,script,require=ImportGlobals(130)local ImportGlobals return (function(...)local Flipper = {
+	SingleMotor = require(script.SingleMotor),
+	GroupMotor = require(script.GroupMotor),
+
+	Instant = require(script.Instant),
+	Linear = require(script.Linear),
+	Spring = require(script.Spring),
+	
+	isMotor = require(script.isMotor),
+}
+
+return Flipper
+end)() end,
+    [139] = function()local wax,script,require=ImportGlobals(139)local ImportGlobals return (function(...)local Connection = {}
+Connection.__index = Connection
+
+function Connection.new(signal, handler)
+	return setmetatable({
+		signal = signal,
+		connected = true,
+		_handler = handler,
+	}, Connection)
+end
+
+function Connection:disconnect()
+	if self.connected then
+		self.connected = false
+
+		for index, connection in pairs(self.signal._connections) do
+			if connection == self then
+				table.remove(self.signal._connections, index)
+				return
+			end
+		end
+	end
+end
+
+local Signal = {}
+Signal.__index = Signal
+
+function Signal.new()
+	return setmetatable({
+		_connections = {},
+		_threads = {},
+	}, Signal)
+end
+
+function Signal:fire(...)
+	for _, connection in pairs(self._connections) do
+		connection._handler(...)
+	end
+
+	for _, thread in pairs(self._threads) do
+		coroutine.resume(thread, ...)
+	end
+	
+	self._threads = {}
+end
+
+function Signal:connect(handler)
+	local connection = Connection.new(self, handler)
+	table.insert(self._connections, connection)
+	return connection
+end
+
+function Signal:wait()
+	table.insert(self._threads, coroutine.running())
+	return coroutine.yield()
+end
+
+return Signal
+end)() end,
+    [135] = function()local wax,script,require=ImportGlobals(135)local ImportGlobals return (function(...)local Instant = {}
+Instant.__index = Instant
+
+function Instant.new(targetValue)
+	return setmetatable({
+		_targetValue = targetValue,
+	}, Instant)
+end
+
+function Instant:step()
+	return {
+		complete = true,
+		value = self._targetValue,
+	}
+end
+
+return Instant
+end)() end,
+    [131] = function()local wax,script,require=ImportGlobals(131)local ImportGlobals return (function(...)local RunService = game:GetService("RunService")
+
+local Signal = require(script.Parent.Signal)
+
+local noop = function() end
+
+local BaseMotor = {}
+BaseMotor.__index = BaseMotor
+
+function BaseMotor.new()
+	return setmetatable({
+		_onStep = Signal.new(),
+		_onStart = Signal.new(),
+		_onComplete = Signal.new(),
+	}, BaseMotor)
+end
+
+function BaseMotor:onStep(handler)
+	return self._onStep:connect(handler)
+end
+
+function BaseMotor:onStart(handler)
+	return self._onStart:connect(handler)
+end
+
+function BaseMotor:onComplete(handler)
+	return self._onComplete:connect(handler)
+end
+
+function BaseMotor:start()
+	if not self._connection then
+		self._connection = RunService.RenderStepped:Connect(function(deltaTime)
+			self:step(deltaTime)
+		end)
+	end
+end
+
+function BaseMotor:stop()
+	if self._connection then
+		self._connection:Disconnect()
+		self._connection = nil
+	end
+end
+
+BaseMotor.destroy = BaseMotor.stop
+
+BaseMotor.step = noop
+BaseMotor.getValue = noop
+BaseMotor.setGoal = noop
+
+function BaseMotor:__tostring()
+	return "Motor"
+end
+
+return BaseMotor
+
+end)() end,
+    [136] = function()local wax,script,require=ImportGlobals(136)local ImportGlobals return (function(...)return function()
+	local Instant = require(script.Parent.Instant)
+
+	it("should return a completed state with the provided value", function()
+		local goal = Instant.new(1.23)
+		local state = goal:step(0.1, { value = 0, complete = false })
+		expect(state.complete).to.equal(true)
+		expect(state.value).to.equal(1.23)
+	end)
+end
+end)() end,
+    [142] = function()local wax,script,require=ImportGlobals(142)local ImportGlobals return (function(...)return function()
+	local SingleMotor = require(script.Parent.SingleMotor)
+	local Instant = require(script.Parent.Instant)
+
+	it("should assign new state on step", function()
+		local motor = SingleMotor.new(0, false)
+
+		motor:setGoal(Instant.new(5))
+		motor:step(1/60)
+
+		expect(motor._state.complete).to.equal(true)
+		expect(motor._state.value).to.equal(5)
+	end)
+
+	it("should invoke onComplete listeners when the goal is completed", function()
+		local motor = SingleMotor.new(0, false)
+
+		local didComplete = false
+		motor:onComplete(function()
+			didComplete = true
+		end)
+
+		motor:setGoal(Instant.new(5))
+		motor:step(1/60)
+
+		expect(didComplete).to.equal(true)
+	end)
+
+	it("should start when the goal is set", function()
+		local motor = SingleMotor.new(0, false)
+
+		local bool = false
+		motor:onStart(function()
+			bool = not bool
+		end)
+
+		motor:setGoal(Instant.new(5))
+
+		expect(bool).to.equal(true)
+
+		motor:setGoal(Instant.new(5))
+
+		expect(bool).to.equal(false)
+	end)
+end
+
+end)() end,
+    [141] = function()local wax,script,require=ImportGlobals(141)local ImportGlobals return (function(...)local BaseMotor = require(script.Parent.BaseMotor)
+
+local SingleMotor = setmetatable({}, BaseMotor)
+SingleMotor.__index = SingleMotor
+
+function SingleMotor.new(initialValue, useImplicitConnections)
+	assert(initialValue, "Missing argument #1: initialValue")
+	assert(typeof(initialValue) == "number", "initialValue must be a number!")
+
+	local self = setmetatable(BaseMotor.new(), SingleMotor)
+
+	if useImplicitConnections ~= nil then
+		self._useImplicitConnections = useImplicitConnections
+	else
+		self._useImplicitConnections = true
+	end
+
+	self._goal = nil
+	self._state = {
+		complete = true,
+		value = initialValue,
+	}
+
+	return self
+end
+
+function SingleMotor:step(deltaTime)
+	if self._state.complete then
+		return true
+	end
+
+	local newState = self._goal:step(self._state, deltaTime)
+
+	self._state = newState
+	self._onStep:fire(newState.value)
+
+	if newState.complete then
+		if self._useImplicitConnections then
+			self:stop()
+		end
+
+		self._onComplete:fire()
+	end
+
+	return newState.complete
+end
+
+function SingleMotor:getValue()
+	return self._state.value
+end
+
+function SingleMotor:setGoal(goal)
+	self._state.complete = false
+	self._goal = goal
+
+	self._onStart:fire()
+
+	if self._useImplicitConnections then
+		self:start()
+	end
+end
+
+function SingleMotor:__tostring()
+	return "Motor(Single)"
+end
+
+return SingleMotor
+
+end)() end,
+    [145] = function()local wax,script,require=ImportGlobals(145)local ImportGlobals return (function(...)local function isMotor(value)
 	local motorType = tostring(value):match("^Motor%((.+)%)$")
 
 	if motorType then
@@ -68931,33 +69180,6 @@ end)() end,
 end
 
 return isMotor
-end)() end,
-    [145] = function()local wax,script,require=ImportGlobals(145)local ImportGlobals return (function(...)return function()
-	local isMotor = require(script.Parent.isMotor)
-
-	local SingleMotor = require(script.Parent.SingleMotor)
-	local GroupMotor = require(script.Parent.GroupMotor)
-
-	local singleMotor = SingleMotor.new(0)
-	local groupMotor = GroupMotor.new({})
-
-	it("should properly detect motors", function()
-		expect(isMotor(singleMotor)).to.equal(true)
-		expect(isMotor(groupMotor)).to.equal(true)
-	end)
-
-	it("shouldn't detect things that aren't motors", function()
-		expect(isMotor({})).to.equal(false)
-	end)
-
-	it("should return the proper motor type", function()
-		local _, singleMotorType = isMotor(singleMotor)
-		local _, groupMotorType = isMotor(groupMotor)
-
-		expect(singleMotorType).to.equal("Single")
-		expect(groupMotorType).to.equal("Group")
-	end)
-end
 end)() end
 } -- [RefId] = Closure
 
@@ -68971,904 +69193,6 @@ local ObjectTree = {
         },
         {
             {
-                91,
-                1,
-                {
-                    "Packages"
-                },
-                {
-                    {
-                        93,
-                        2,
-                        {
-                            "Ripple"
-                        }
-                    },
-                    {
-                        94,
-                        2,
-                        {
-                            "Signal"
-                        }
-                    },
-                    {
-                        95,
-                        1,
-                        {
-                            "_Index"
-                        },
-                        {
-                            {
-                                96,
-                                1,
-                                {
-                                    "evaera_promise@4.0.0"
-                                },
-                                {
-                                    {
-                                        97,
-                                        2,
-                                        {
-                                            "promise"
-                                        },
-                                        {
-                                            {
-                                                98,
-                                                2,
-                                                {
-                                                    "init.spec"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            {
-                                121,
-                                1,
-                                {
-                                    "lucasmzreal_fastsignal@10.4.0"
-                                },
-                                {
-                                    {
-                                        122,
-                                        2,
-                                        {
-                                            "fastsignal"
-                                        },
-                                        {
-                                            {
-                                                126,
-                                                2,
-                                                {
-                                                    "Readme"
-                                                }
-                                            },
-                                            {
-                                                125,
-                                                2,
-                                                {
-                                                    "Immediate"
-                                                }
-                                            },
-                                            {
-                                                123,
-                                                2,
-                                                {
-                                                    "Deferred"
-                                                }
-                                            },
-                                            {
-                                                124,
-                                                2,
-                                                {
-                                                    "Docs"
-                                                }
-                                            },
-                                            {
-                                                127,
-                                                2,
-                                                {
-                                                    "wally"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            {
-                                128,
-                                1,
-                                {
-                                    "reselim_flipper@2.0.0"
-                                },
-                                {
-                                    {
-                                        129,
-                                        2,
-                                        {
-                                            "flipper"
-                                        },
-                                        {
-                                            {
-                                                140,
-                                                2,
-                                                {
-                                                    "SingleMotor"
-                                                }
-                                            },
-                                            {
-                                                130,
-                                                2,
-                                                {
-                                                    "BaseMotor"
-                                                }
-                                            },
-                                            {
-                                                145,
-                                                2,
-                                                {
-                                                    "isMotor.spec"
-                                                }
-                                            },
-                                            {
-                                                136,
-                                                2,
-                                                {
-                                                    "Linear"
-                                                }
-                                            },
-                                            {
-                                                135,
-                                                2,
-                                                {
-                                                    "Instant.spec"
-                                                }
-                                            },
-                                            {
-                                                138,
-                                                2,
-                                                {
-                                                    "Signal"
-                                                }
-                                            },
-                                            {
-                                                133,
-                                                2,
-                                                {
-                                                    "GroupMotor.spec"
-                                                }
-                                            },
-                                            {
-                                                131,
-                                                2,
-                                                {
-                                                    "BaseMotor.spec"
-                                                }
-                                            },
-                                            {
-                                                137,
-                                                2,
-                                                {
-                                                    "Linear.spec"
-                                                }
-                                            },
-                                            {
-                                                134,
-                                                2,
-                                                {
-                                                    "Instant"
-                                                }
-                                            },
-                                            {
-                                                139,
-                                                2,
-                                                {
-                                                    "Signal.spec"
-                                                }
-                                            },
-                                            {
-                                                132,
-                                                2,
-                                                {
-                                                    "GroupMotor"
-                                                }
-                                            },
-                                            {
-                                                142,
-                                                2,
-                                                {
-                                                    "Spring"
-                                                }
-                                            },
-                                            {
-                                                143,
-                                                2,
-                                                {
-                                                    "Spring.spec"
-                                                }
-                                            },
-                                            {
-                                                141,
-                                                2,
-                                                {
-                                                    "SingleMotor.spec"
-                                                }
-                                            },
-                                            {
-                                                144,
-                                                2,
-                                                {
-                                                    "isMotor"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            {
-                                99,
-                                1,
-                                {
-                                    "littensy_ripple@0.9.3"
-                                },
-                                {
-                                    {
-                                        101,
-                                        2,
-                                        {
-                                            "ripple"
-                                        },
-                                        {
-                                            {
-                                                104,
-                                                2,
-                                                {
-                                                    "createMotion.spec"
-                                                }
-                                            },
-                                            {
-                                                102,
-                                                2,
-                                                {
-                                                    "config"
-                                                }
-                                            },
-                                            {
-                                                103,
-                                                2,
-                                                {
-                                                    "createMotion"
-                                                }
-                                            },
-                                            {
-                                                114,
-                                                2,
-                                                {
-                                                    "types"
-                                                }
-                                            },
-                                            {
-                                                115,
-                                                1,
-                                                {
-                                                    "utils"
-                                                },
-                                                {
-                                                    {
-                                                        119,
-                                                        2,
-                                                        {
-                                                            "snapshot"
-                                                        }
-                                                    },
-                                                    {
-                                                        118,
-                                                        2,
-                                                        {
-                                                            "merge"
-                                                        }
-                                                    },
-                                                    {
-                                                        117,
-                                                        2,
-                                                        {
-                                                            "intermediate"
-                                                        }
-                                                    },
-                                                    {
-                                                        116,
-                                                        2,
-                                                        {
-                                                            "assign"
-                                                        }
-                                                    },
-                                                    {
-                                                        120,
-                                                        2,
-                                                        {
-                                                            "spy"
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                105,
-                                                1,
-                                                {
-                                                    "solvers"
-                                                },
-                                                {
-                                                    {
-                                                        108,
-                                                        2,
-                                                        {
-                                                            "linear"
-                                                        }
-                                                    },
-                                                    {
-                                                        113,
-                                                        2,
-                                                        {
-                                                            "tween.spec"
-                                                        }
-                                                    },
-                                                    {
-                                                        112,
-                                                        2,
-                                                        {
-                                                            "tween"
-                                                        }
-                                                    },
-                                                    {
-                                                        111,
-                                                        2,
-                                                        {
-                                                            "spring.spec"
-                                                        }
-                                                    },
-                                                    {
-                                                        110,
-                                                        2,
-                                                        {
-                                                            "spring"
-                                                        }
-                                                    },
-                                                    {
-                                                        106,
-                                                        2,
-                                                        {
-                                                            "immediate"
-                                                        }
-                                                    },
-                                                    {
-                                                        109,
-                                                        2,
-                                                        {
-                                                            "linear.spec"
-                                                        }
-                                                    },
-                                                    {
-                                                        107,
-                                                        2,
-                                                        {
-                                                            "immediate.spec"
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    {
-                                        100,
-                                        2,
-                                        {
-                                            "Promise"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    {
-                        92,
-                        2,
-                        {
-                            "Flipper"
-                        }
-                    }
-                }
-            },
-            {
-                31,
-                2,
-                {
-                    "Themes"
-                },
-                {
-                    {
-                        41,
-                        2,
-                        {
-                            "Darker"
-                        }
-                    },
-                    {
-                        78,
-                        2,
-                        {
-                            "VSC Light Modern"
-                        }
-                    },
-                    {
-                        73,
-                        2,
-                        {
-                            "VS Light"
-                        }
-                    },
-                    {
-                        50,
-                        2,
-                        {
-                            "GitHub Dark Dimmed"
-                        }
-                    },
-                    {
-                        90,
-                        2,
-                        {
-                            "Yaru"
-                        }
-                    },
-                    {
-                        74,
-                        2,
-                        {
-                            "VSC Dark High Contrast"
-                        }
-                    },
-                    {
-                        45,
-                        2,
-                        {
-                            "DuoTone Dark Sky"
-                        }
-                    },
-                    {
-                        37,
-                        2,
-                        {
-                            "Aqua"
-                        }
-                    },
-                    {
-                        88,
-                        2,
-                        {
-                            "Vynixu"
-                        }
-                    },
-                    {
-                        71,
-                        2,
-                        {
-                            "United Ubuntu"
-                        }
-                    },
-                    {
-                        43,
-                        2,
-                        {
-                            "DuoTone Dark Forest"
-                        }
-                    },
-                    {
-                        55,
-                        2,
-                        {
-                            "GitHub Light High Contrast"
-                        }
-                    },
-                    {
-                        80,
-                        2,
-                        {
-                            "VSC Red"
-                        }
-                    },
-                    {
-                        57,
-                        2,
-                        {
-                            "Glass"
-                        }
-                    },
-                    {
-                        89,
-                        2,
-                        {
-                            "Yaru Dark"
-                        }
-                    },
-                    {
-                        48,
-                        2,
-                        {
-                            "GitHub Dark Colorblind"
-                        }
-                    },
-                    {
-                        32,
-                        2,
-                        {
-                            "Abyss"
-                        }
-                    },
-                    {
-                        56,
-                        2,
-                        {
-                            "GitHub Light"
-                        }
-                    },
-                    {
-                        47,
-                        2,
-                        {
-                            "Elementary"
-                        }
-                    },
-                    {
-                        87,
-                        2,
-                        {
-                            "Viow Neon"
-                        }
-                    },
-                    {
-                        86,
-                        2,
-                        {
-                            "Viow Mars"
-                        }
-                    },
-                    {
-                        77,
-                        2,
-                        {
-                            "VSC Light High Contrast"
-                        }
-                    },
-                    {
-                        42,
-                        2,
-                        {
-                            "DuoTone Dark Earth"
-                        }
-                    },
-                    {
-                        72,
-                        2,
-                        {
-                            "VS Dark"
-                        }
-                    },
-                    {
-                        84,
-                        2,
-                        {
-                            "Viow Flat"
-                        }
-                    },
-                    {
-                        79,
-                        2,
-                        {
-                            "VSC Light+"
-                        }
-                    },
-                    {
-                        85,
-                        2,
-                        {
-                            "Viow Light"
-                        }
-                    },
-                    {
-                        51,
-                        2,
-                        {
-                            "GitHub Dark High Contrast"
-                        }
-                    },
-                    {
-                        33,
-                        2,
-                        {
-                            "Adapta Nokto"
-                        }
-                    },
-                    {
-                        60,
-                        2,
-                        {
-                            "Monokai Classic"
-                        }
-                    },
-                    {
-                        35,
-                        2,
-                        {
-                            "Amethyst Dark"
-                        }
-                    },
-                    {
-                        82,
-                        2,
-                        {
-                            "Viow Arabian"
-                        }
-                    },
-                    {
-                        81,
-                        2,
-                        {
-                            "Viow Arabian Mix"
-                        }
-                    },
-                    {
-                        66,
-                        2,
-                        {
-                            "Solarized Dark"
-                        }
-                    },
-                    {
-                        44,
-                        2,
-                        {
-                            "DuoTone Dark Sea"
-                        }
-                    },
-                    {
-                        70,
-                        2,
-                        {
-                            "United GNOME"
-                        }
-                    },
-                    {
-                        76,
-                        2,
-                        {
-                            "VSC Dark+"
-                        }
-                    },
-                    {
-                        64,
-                        2,
-                        {
-                            "Quiet Light"
-                        }
-                    },
-                    {
-                        69,
-                        2,
-                        {
-                            "Typewriter"
-                        }
-                    },
-                    {
-                        36,
-                        2,
-                        {
-                            "Amethyst"
-                        }
-                    },
-                    {
-                        67,
-                        2,
-                        {
-                            "Solarized Light"
-                        }
-                    },
-                    {
-                        59,
-                        2,
-                        {
-                            "Light"
-                        }
-                    },
-                    {
-                        65,
-                        2,
-                        {
-                            "Rose"
-                        }
-                    },
-                    {
-                        58,
-                        2,
-                        {
-                            "Kimbie Dark"
-                        }
-                    },
-                    {
-                        75,
-                        2,
-                        {
-                            "VSC Dark Modern"
-                        }
-                    },
-                    {
-                        39,
-                        2,
-                        {
-                            "Dark Typewriter"
-                        }
-                    },
-                    {
-                        63,
-                        2,
-                        {
-                            "Monokai"
-                        }
-                    },
-                    {
-                        62,
-                        2,
-                        {
-                            "Monokai Vibrant"
-                        }
-                    },
-                    {
-                        61,
-                        2,
-                        {
-                            "Monokai Dimmed"
-                        }
-                    },
-                    {
-                        83,
-                        2,
-                        {
-                            "Viow Darker"
-                        }
-                    },
-                    {
-                        68,
-                        2,
-                        {
-                            "Tomorrow Night Blue"
-                        }
-                    },
-                    {
-                        52,
-                        2,
-                        {
-                            "GitHub Dark"
-                        }
-                    },
-                    {
-                        49,
-                        2,
-                        {
-                            "GitHub Dark Default"
-                        }
-                    },
-                    {
-                        53,
-                        2,
-                        {
-                            "GitHub Light Colorblind"
-                        }
-                    },
-                    {
-                        34,
-                        2,
-                        {
-                            "Ambiance"
-                        }
-                    },
-                    {
-                        38,
-                        2,
-                        {
-                            "Arc Dark"
-                        }
-                    },
-                    {
-                        54,
-                        2,
-                        {
-                            "GitHub Light Default"
-                        }
-                    },
-                    {
-                        40,
-                        2,
-                        {
-                            "Dark"
-                        }
-                    },
-                    {
-                        46,
-                        2,
-                        {
-                            "DuoTone Dark Space"
-                        }
-                    }
-                }
-            },
-            {
-                22,
-                1,
-                {
-                    "Modules"
-                },
-                {
-                    {
-                        28,
-                        2,
-                        {
-                            "Creator"
-                        }
-                    },
-                    {
-                        30,
-                        2,
-                        {
-                            "WaveBackground"
-                        }
-                    },
-                    {
-                        29,
-                        2,
-                        {
-                            "Icons"
-                        }
-                    },
-                    {
-                        23,
-                        2,
-                        {
-                            "Acrylic"
-                        },
-                        {
-                            {
-                                27,
-                                2,
-                                {
-                                    "Utils"
-                                }
-                            },
-                            {
-                                25,
-                                2,
-                                {
-                                    "AcrylicPaint"
-                                }
-                            },
-                            {
-                                26,
-                                2,
-                                {
-                                    "CreateAcrylic"
-                                }
-                            },
-                            {
-                                24,
-                                2,
-                                {
-                                    "AcrylicBlur"
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            {
                 13,
                 2,
                 {
@@ -69876,21 +69200,14 @@ local ObjectTree = {
                 },
                 {
                     {
-                        15,
+                        16,
                         2,
                         {
-                            "Colorpicker"
+                            "Divider"
                         }
                     },
                     {
                         21,
-                        2,
-                        {
-                            "Toggle"
-                        }
-                    },
-                    {
-                        20,
                         2,
                         {
                             "Slider"
@@ -69904,14 +69221,35 @@ local ObjectTree = {
                         }
                     },
                     {
-                        16,
+                        22,
                         2,
                         {
-                            "Dropdown"
+                            "Toggle"
+                        }
+                    },
+                    {
+                        15,
+                        2,
+                        {
+                            "Colorpicker"
                         }
                     },
                     {
                         18,
+                        2,
+                        {
+                            "Input"
+                        }
+                    },
+                    {
+                        20,
+                        2,
+                        {
+                            "Paragraph"
+                        }
+                    },
+                    {
+                        19,
                         2,
                         {
                             "Keybind"
@@ -69921,14 +69259,416 @@ local ObjectTree = {
                         17,
                         2,
                         {
-                            "Input"
+                            "Dropdown"
+                        }
+                    }
+                }
+            },
+            {
+                92,
+                1,
+                {
+                    "Packages"
+                },
+                {
+                    {
+                        96,
+                        1,
+                        {
+                            "_Index"
+                        },
+                        {
+                            {
+                                122,
+                                1,
+                                {
+                                    "lucasmzreal_fastsignal@10.4.0"
+                                },
+                                {
+                                    {
+                                        123,
+                                        2,
+                                        {
+                                            "fastsignal"
+                                        },
+                                        {
+                                            {
+                                                125,
+                                                2,
+                                                {
+                                                    "Docs"
+                                                }
+                                            },
+                                            {
+                                                124,
+                                                2,
+                                                {
+                                                    "Deferred"
+                                                }
+                                            },
+                                            {
+                                                127,
+                                                2,
+                                                {
+                                                    "Readme"
+                                                }
+                                            },
+                                            {
+                                                128,
+                                                2,
+                                                {
+                                                    "wally"
+                                                }
+                                            },
+                                            {
+                                                126,
+                                                2,
+                                                {
+                                                    "Immediate"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                129,
+                                1,
+                                {
+                                    "reselim_flipper@2.0.0"
+                                },
+                                {
+                                    {
+                                        130,
+                                        2,
+                                        {
+                                            "flipper"
+                                        },
+                                        {
+                                            {
+                                                136,
+                                                2,
+                                                {
+                                                    "Instant.spec"
+                                                }
+                                            },
+                                            {
+                                                142,
+                                                2,
+                                                {
+                                                    "SingleMotor.spec"
+                                                }
+                                            },
+                                            {
+                                                146,
+                                                2,
+                                                {
+                                                    "isMotor.spec"
+                                                }
+                                            },
+                                            {
+                                                141,
+                                                2,
+                                                {
+                                                    "SingleMotor"
+                                                }
+                                            },
+                                            {
+                                                133,
+                                                2,
+                                                {
+                                                    "GroupMotor"
+                                                }
+                                            },
+                                            {
+                                                145,
+                                                2,
+                                                {
+                                                    "isMotor"
+                                                }
+                                            },
+                                            {
+                                                143,
+                                                2,
+                                                {
+                                                    "Spring"
+                                                }
+                                            },
+                                            {
+                                                132,
+                                                2,
+                                                {
+                                                    "BaseMotor.spec"
+                                                }
+                                            },
+                                            {
+                                                137,
+                                                2,
+                                                {
+                                                    "Linear"
+                                                }
+                                            },
+                                            {
+                                                144,
+                                                2,
+                                                {
+                                                    "Spring.spec"
+                                                }
+                                            },
+                                            {
+                                                140,
+                                                2,
+                                                {
+                                                    "Signal.spec"
+                                                }
+                                            },
+                                            {
+                                                131,
+                                                2,
+                                                {
+                                                    "BaseMotor"
+                                                }
+                                            },
+                                            {
+                                                135,
+                                                2,
+                                                {
+                                                    "Instant"
+                                                }
+                                            },
+                                            {
+                                                134,
+                                                2,
+                                                {
+                                                    "GroupMotor.spec"
+                                                }
+                                            },
+                                            {
+                                                138,
+                                                2,
+                                                {
+                                                    "Linear.spec"
+                                                }
+                                            },
+                                            {
+                                                139,
+                                                2,
+                                                {
+                                                    "Signal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                100,
+                                1,
+                                {
+                                    "littensy_ripple@0.9.3"
+                                },
+                                {
+                                    {
+                                        101,
+                                        2,
+                                        {
+                                            "Promise"
+                                        }
+                                    },
+                                    {
+                                        102,
+                                        2,
+                                        {
+                                            "ripple"
+                                        },
+                                        {
+                                            {
+                                                106,
+                                                1,
+                                                {
+                                                    "solvers"
+                                                },
+                                                {
+                                                    {
+                                                        112,
+                                                        2,
+                                                        {
+                                                            "spring.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        107,
+                                                        2,
+                                                        {
+                                                            "immediate"
+                                                        }
+                                                    },
+                                                    {
+                                                        108,
+                                                        2,
+                                                        {
+                                                            "immediate.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        111,
+                                                        2,
+                                                        {
+                                                            "spring"
+                                                        }
+                                                    },
+                                                    {
+                                                        113,
+                                                        2,
+                                                        {
+                                                            "tween"
+                                                        }
+                                                    },
+                                                    {
+                                                        114,
+                                                        2,
+                                                        {
+                                                            "tween.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        110,
+                                                        2,
+                                                        {
+                                                            "linear.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        109,
+                                                        2,
+                                                        {
+                                                            "linear"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                115,
+                                                2,
+                                                {
+                                                    "types"
+                                                }
+                                            },
+                                            {
+                                                103,
+                                                2,
+                                                {
+                                                    "config"
+                                                }
+                                            },
+                                            {
+                                                116,
+                                                1,
+                                                {
+                                                    "utils"
+                                                },
+                                                {
+                                                    {
+                                                        118,
+                                                        2,
+                                                        {
+                                                            "intermediate"
+                                                        }
+                                                    },
+                                                    {
+                                                        121,
+                                                        2,
+                                                        {
+                                                            "spy"
+                                                        }
+                                                    },
+                                                    {
+                                                        120,
+                                                        2,
+                                                        {
+                                                            "snapshot"
+                                                        }
+                                                    },
+                                                    {
+                                                        119,
+                                                        2,
+                                                        {
+                                                            "merge"
+                                                        }
+                                                    },
+                                                    {
+                                                        117,
+                                                        2,
+                                                        {
+                                                            "assign"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                104,
+                                                2,
+                                                {
+                                                    "createMotion"
+                                                }
+                                            },
+                                            {
+                                                105,
+                                                2,
+                                                {
+                                                    "createMotion.spec"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                97,
+                                1,
+                                {
+                                    "evaera_promise@4.0.0"
+                                },
+                                {
+                                    {
+                                        98,
+                                        2,
+                                        {
+                                            "promise"
+                                        },
+                                        {
+                                            {
+                                                99,
+                                                2,
+                                                {
+                                                    "init.spec"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     },
                     {
-                        19,
+                        94,
                         2,
                         {
-                            "Paragraph"
+                            "Ripple"
+                        }
+                    },
+                    {
+                        93,
+                        2,
+                        {
+                            "Flipper"
+                        }
+                    },
+                    {
+                        95,
+                        2,
+                        {
+                            "Signal"
                         }
                     }
                 }
@@ -69941,10 +69681,10 @@ local ObjectTree = {
                 },
                 {
                     {
-                        10,
+                        9,
                         2,
                         {
-                            "Textbox"
+                            "Tab"
                         }
                     },
                     {
@@ -69955,17 +69695,10 @@ local ObjectTree = {
                         }
                     },
                     {
-                        12,
+                        5,
                         2,
                         {
-                            "Window"
-                        }
-                    },
-                    {
-                        11,
-                        2,
-                        {
-                            "TitleBar"
+                            "Dialog"
                         }
                     },
                     {
@@ -69976,17 +69709,38 @@ local ObjectTree = {
                         }
                     },
                     {
-                        9,
+                        8,
                         2,
                         {
-                            "Tab"
+                            "Section"
                         }
                     },
                     {
-                        5,
+                        11,
                         2,
                         {
-                            "Dialog"
+                            "TitleBar"
+                        }
+                    },
+                    {
+                        12,
+                        2,
+                        {
+                            "Window"
+                        }
+                    },
+                    {
+                        7,
+                        2,
+                        {
+                            "Notification"
+                        }
+                    },
+                    {
+                        10,
+                        2,
+                        {
+                            "Textbox"
                         }
                     },
                     {
@@ -69995,19 +69749,494 @@ local ObjectTree = {
                         {
                             "Button"
                         }
-                    },
+                    }
+                }
+            },
+            {
+                32,
+                2,
+                {
+                    "Themes"
+                },
+                {
                     {
-                        8,
+                        77,
                         2,
                         {
-                            "Section"
+                            "VSC Dark+"
                         }
                     },
                     {
-                        7,
+                        42,
                         2,
                         {
-                            "Notification"
+                            "Darker"
+                        }
+                    },
+                    {
+                        73,
+                        2,
+                        {
+                            "VS Dark"
+                        }
+                    },
+                    {
+                        52,
+                        2,
+                        {
+                            "GitHub Dark High Contrast"
+                        }
+                    },
+                    {
+                        46,
+                        2,
+                        {
+                            "DuoTone Dark Sky"
+                        }
+                    },
+                    {
+                        33,
+                        2,
+                        {
+                            "Abyss"
+                        }
+                    },
+                    {
+                        71,
+                        2,
+                        {
+                            "United GNOME"
+                        }
+                    },
+                    {
+                        36,
+                        2,
+                        {
+                            "Amethyst Dark"
+                        }
+                    },
+                    {
+                        54,
+                        2,
+                        {
+                            "GitHub Light Colorblind"
+                        }
+                    },
+                    {
+                        41,
+                        2,
+                        {
+                            "Dark"
+                        }
+                    },
+                    {
+                        69,
+                        2,
+                        {
+                            "Tomorrow Night Blue"
+                        }
+                    },
+                    {
+                        43,
+                        2,
+                        {
+                            "DuoTone Dark Earth"
+                        }
+                    },
+                    {
+                        63,
+                        2,
+                        {
+                            "Monokai Vibrant"
+                        }
+                    },
+                    {
+                        49,
+                        2,
+                        {
+                            "GitHub Dark Colorblind"
+                        }
+                    },
+                    {
+                        90,
+                        2,
+                        {
+                            "Yaru Dark"
+                        }
+                    },
+                    {
+                        68,
+                        2,
+                        {
+                            "Solarized Light"
+                        }
+                    },
+                    {
+                        89,
+                        2,
+                        {
+                            "Vynixu"
+                        }
+                    },
+                    {
+                        88,
+                        2,
+                        {
+                            "Viow Neon"
+                        }
+                    },
+                    {
+                        87,
+                        2,
+                        {
+                            "Viow Mars"
+                        }
+                    },
+                    {
+                        57,
+                        2,
+                        {
+                            "GitHub Light"
+                        }
+                    },
+                    {
+                        85,
+                        2,
+                        {
+                            "Viow Flat"
+                        }
+                    },
+                    {
+                        48,
+                        2,
+                        {
+                            "Elementary"
+                        }
+                    },
+                    {
+                        37,
+                        2,
+                        {
+                            "Amethyst"
+                        }
+                    },
+                    {
+                        38,
+                        2,
+                        {
+                            "Aqua"
+                        }
+                    },
+                    {
+                        50,
+                        2,
+                        {
+                            "GitHub Dark Default"
+                        }
+                    },
+                    {
+                        84,
+                        2,
+                        {
+                            "Viow Darker"
+                        }
+                    },
+                    {
+                        83,
+                        2,
+                        {
+                            "Viow Arabian"
+                        }
+                    },
+                    {
+                        82,
+                        2,
+                        {
+                            "Viow Arabian Mix"
+                        }
+                    },
+                    {
+                        53,
+                        2,
+                        {
+                            "GitHub Dark"
+                        }
+                    },
+                    {
+                        86,
+                        2,
+                        {
+                            "Viow Light"
+                        }
+                    },
+                    {
+                        62,
+                        2,
+                        {
+                            "Monokai Dimmed"
+                        }
+                    },
+                    {
+                        44,
+                        2,
+                        {
+                            "DuoTone Dark Forest"
+                        }
+                    },
+                    {
+                        34,
+                        2,
+                        {
+                            "Adapta Nokto"
+                        }
+                    },
+                    {
+                        80,
+                        2,
+                        {
+                            "VSC Light+"
+                        }
+                    },
+                    {
+                        61,
+                        2,
+                        {
+                            "Monokai Classic"
+                        }
+                    },
+                    {
+                        59,
+                        2,
+                        {
+                            "Kimbie Dark"
+                        }
+                    },
+                    {
+                        70,
+                        2,
+                        {
+                            "Typewriter"
+                        }
+                    },
+                    {
+                        58,
+                        2,
+                        {
+                            "Glass"
+                        }
+                    },
+                    {
+                        78,
+                        2,
+                        {
+                            "VSC Light High Contrast"
+                        }
+                    },
+                    {
+                        51,
+                        2,
+                        {
+                            "GitHub Dark Dimmed"
+                        }
+                    },
+                    {
+                        47,
+                        2,
+                        {
+                            "DuoTone Dark Space"
+                        }
+                    },
+                    {
+                        75,
+                        2,
+                        {
+                            "VSC Dark High Contrast"
+                        }
+                    },
+                    {
+                        74,
+                        2,
+                        {
+                            "VS Light"
+                        }
+                    },
+                    {
+                        35,
+                        2,
+                        {
+                            "Ambiance"
+                        }
+                    },
+                    {
+                        45,
+                        2,
+                        {
+                            "DuoTone Dark Sea"
+                        }
+                    },
+                    {
+                        66,
+                        2,
+                        {
+                            "Rose"
+                        }
+                    },
+                    {
+                        79,
+                        2,
+                        {
+                            "VSC Light Modern"
+                        }
+                    },
+                    {
+                        76,
+                        2,
+                        {
+                            "VSC Dark Modern"
+                        }
+                    },
+                    {
+                        64,
+                        2,
+                        {
+                            "Monokai"
+                        }
+                    },
+                    {
+                        65,
+                        2,
+                        {
+                            "Quiet Light"
+                        }
+                    },
+                    {
+                        67,
+                        2,
+                        {
+                            "Solarized Dark"
+                        }
+                    },
+                    {
+                        91,
+                        2,
+                        {
+                            "Yaru"
+                        }
+                    },
+                    {
+                        55,
+                        2,
+                        {
+                            "GitHub Light Default"
+                        }
+                    },
+                    {
+                        81,
+                        2,
+                        {
+                            "VSC Red"
+                        }
+                    },
+                    {
+                        39,
+                        2,
+                        {
+                            "Arc Dark"
+                        }
+                    },
+                    {
+                        40,
+                        2,
+                        {
+                            "Dark Typewriter"
+                        }
+                    },
+                    {
+                        72,
+                        2,
+                        {
+                            "United Ubuntu"
+                        }
+                    },
+                    {
+                        60,
+                        2,
+                        {
+                            "Light"
+                        }
+                    },
+                    {
+                        56,
+                        2,
+                        {
+                            "GitHub Light High Contrast"
+                        }
+                    }
+                }
+            },
+            {
+                23,
+                1,
+                {
+                    "Modules"
+                },
+                {
+                    {
+                        31,
+                        2,
+                        {
+                            "WaveBackground"
+                        }
+                    },
+                    {
+                        30,
+                        2,
+                        {
+                            "Icons"
+                        }
+                    },
+                    {
+                        29,
+                        2,
+                        {
+                            "Creator"
+                        }
+                    },
+                    {
+                        24,
+                        2,
+                        {
+                            "Acrylic"
+                        },
+                        {
+                            {
+                                27,
+                                2,
+                                {
+                                    "CreateAcrylic"
+                                }
+                            },
+                            {
+                                25,
+                                2,
+                                {
+                                    "AcrylicBlur"
+                                }
+                            },
+                            {
+                                28,
+                                2,
+                                {
+                                    "Utils"
+                                }
+                            },
+                            {
+                                26,
+                                2,
+                                {
+                                    "AcrylicPaint"
+                                }
+                            }
                         }
                     }
                 }
@@ -70023,136 +70252,137 @@ local LineOffsets = {
     [4] = 442,
     [5] = 523,
     [6] = 693,
-    [7] = 843,
-    [8] = 1065,
-    [9] = 1167,
-    [10] = 1463,
-    [11] = 1587,
-    [12] = 1829,
-    [13] = 2435,
-    [14] = 2444,
-    [15] = 2487,
-    [16] = 3064,
-    [17] = 3663,
-    [18] = 3768,
-    [19] = 3994,
-    [20] = 4072,
-    [21] = 4254,
-    [23] = 4599,
-    [24] = 4652,
-    [25] = 4770,
-    [26] = 4892,
-    [27] = 4919,
-    [28] = 4936,
-    [29] = 5166,
-    [30] = 58352,
-    [31] = 58430,
-    [32] = 58507,
-    [33] = 58554,
-    [34] = 58601,
-    [35] = 58648,
-    [36] = 58695,
-    [37] = 58743,
-    [38] = 58791,
-    [39] = 58838,
-    [40] = 58885,
-    [41] = 58936,
-    [42] = 58967,
-    [43] = 59014,
-    [44] = 59061,
-    [45] = 59108,
-    [46] = 59155,
-    [47] = 59202,
-    [48] = 59249,
-    [49] = 59296,
-    [50] = 59343,
-    [51] = 59390,
-    [52] = 59439,
-    [53] = 59486,
-    [54] = 59533,
-    [55] = 59581,
-    [56] = 59628,
-    [57] = 59675,
-    [58] = 59726,
-    [59] = 59773,
-    [60] = 59821,
-    [61] = 59868,
-    [62] = 59915,
-    [63] = 59962,
-    [64] = 60009,
-    [65] = 60056,
-    [66] = 60104,
-    [67] = 60151,
-    [68] = 60198,
-    [69] = 60245,
-    [70] = 60292,
-    [71] = 60339,
-    [72] = 60386,
-    [73] = 60433,
-    [74] = 60480,
-    [75] = 60527,
-    [76] = 60574,
-    [77] = 60621,
-    [78] = 60668,
-    [79] = 60715,
-    [80] = 60762,
-    [81] = 60809,
-    [82] = 60856,
-    [83] = 60903,
-    [84] = 60950,
-    [85] = 60997,
-    [86] = 61044,
-    [87] = 61091,
-    [88] = 61138,
-    [89] = 61188,
-    [90] = 61235,
-    [92] = 61282,
-    [93] = 61285,
-    [94] = 61288,
-    [97] = 61291,
-    [98] = 63361,
-    [100] = 65207,
-    [101] = 65210,
-    [102] = 65234,
-    [103] = 65263,
-    [104] = 65573,
-    [106] = 65901,
-    [107] = 65922,
-    [108] = 66018,
-    [109] = 66057,
-    [110] = 66133,
-    [111] = 66209,
-    [112] = 66303,
-    [113] = 66386,
-    [114] = 66451,
-    [116] = 66530,
-    [117] = 66547,
-    [118] = 66652,
-    [119] = 66665,
-    [120] = 66714,
-    [122] = 66740,
-    [123] = 66794,
-    [124] = 66984,
-    [125] = 67219,
-    [126] = 67298,
-    [127] = 67328,
-    [129] = 67340,
-    [130] = 67353,
-    [131] = 67410,
-    [132] = 67451,
-    [133] = 67560,
-    [134] = 67645,
-    [135] = 67663,
-    [136] = 67674,
-    [137] = 67711,
-    [138] = 67769,
-    [139] = 67828,
-    [140] = 67878,
-    [141] = 67947,
-    [142] = 67994,
-    [143] = 68103,
-    [144] = 68139,
-    [145] = 68151
+    [7] = 933,
+    [8] = 1155,
+    [9] = 1258,
+    [10] = 1714,
+    [11] = 1873,
+    [12] = 2214,
+    [13] = 2927,
+    [14] = 2936,
+    [15] = 3002,
+    [16] = 3588,
+    [17] = 3674,
+    [18] = 4367,
+    [19] = 4472,
+    [20] = 4698,
+    [21] = 4779,
+    [22] = 5262,
+    [24] = 5605,
+    [25] = 5658,
+    [26] = 5776,
+    [27] = 5898,
+    [28] = 5925,
+    [29] = 5942,
+    [30] = 6172,
+    [31] = 59358,
+    [32] = 59436,
+    [33] = 59513,
+    [34] = 59560,
+    [35] = 59607,
+    [36] = 59654,
+    [37] = 59701,
+    [38] = 59749,
+    [39] = 59797,
+    [40] = 59844,
+    [41] = 59891,
+    [42] = 59942,
+    [43] = 59973,
+    [44] = 60020,
+    [45] = 60067,
+    [46] = 60114,
+    [47] = 60161,
+    [48] = 60208,
+    [49] = 60255,
+    [50] = 60302,
+    [51] = 60349,
+    [52] = 60396,
+    [53] = 60445,
+    [54] = 60492,
+    [55] = 60539,
+    [56] = 60587,
+    [57] = 60634,
+    [58] = 60681,
+    [59] = 60732,
+    [60] = 60779,
+    [61] = 60827,
+    [62] = 60874,
+    [63] = 60921,
+    [64] = 60968,
+    [65] = 61015,
+    [66] = 61062,
+    [67] = 61110,
+    [68] = 61157,
+    [69] = 61204,
+    [70] = 61251,
+    [71] = 61298,
+    [72] = 61345,
+    [73] = 61392,
+    [74] = 61439,
+    [75] = 61486,
+    [76] = 61533,
+    [77] = 61580,
+    [78] = 61627,
+    [79] = 61674,
+    [80] = 61721,
+    [81] = 61768,
+    [82] = 61815,
+    [83] = 61862,
+    [84] = 61909,
+    [85] = 61956,
+    [86] = 62003,
+    [87] = 62050,
+    [88] = 62097,
+    [89] = 62144,
+    [90] = 62194,
+    [91] = 62241,
+    [93] = 62288,
+    [94] = 62291,
+    [95] = 62294,
+    [98] = 62297,
+    [99] = 64367,
+    [101] = 66213,
+    [102] = 66216,
+    [103] = 66240,
+    [104] = 66269,
+    [105] = 66579,
+    [107] = 66907,
+    [108] = 66928,
+    [109] = 67024,
+    [110] = 67063,
+    [111] = 67139,
+    [112] = 67215,
+    [113] = 67309,
+    [114] = 67392,
+    [115] = 67457,
+    [117] = 67536,
+    [118] = 67553,
+    [119] = 67658,
+    [120] = 67671,
+    [121] = 67720,
+    [123] = 67746,
+    [124] = 67800,
+    [125] = 67990,
+    [126] = 68225,
+    [127] = 68304,
+    [128] = 68334,
+    [130] = 68898,
+    [131] = 68988,
+    [132] = 68685,
+    [133] = 68753,
+    [134] = 68346,
+    [135] = 68970,
+    [136] = 69045,
+    [137] = 68590,
+    [138] = 68627,
+    [139] = 68911,
+    [140] = 68431,
+    [141] = 69103,
+    [142] = 69056,
+    [143] = 68481,
+    [144] = 68862,
+    [145] = 69172,
+    [146] = 68726
 }
 
 -- Misc AOT variable imports
