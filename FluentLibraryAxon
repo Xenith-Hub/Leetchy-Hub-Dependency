@@ -6109,14 +6109,20 @@ function Creator.UpdateTheme(RegistryIndex: Instance?)
 				Object.Object[Property] = Creator.GetThemeProperty(ColorIdx)
 			end
 		end
-	end	
 
-	for Idx: number, Motor in next, Creator.TransparencyMotors do
-		if Idx % 135 == 0 then
-			task.wait()
+		-- Re-goal transparency motors ONLY on a full theme update (RegistryIndex nil).
+		-- Previously this ran on every single-object registration too, so building a
+		-- window's WaveBackground (480 themed frames) re-goaled every transparency
+		-- motor in the UI 480 times -- an O(objects x motors) blowup that made
+		-- CreateWindow take ~450ms. New motors get their initial value at creation
+		-- (SpringMotor -> Flipper.SingleMotor.new), so single adds never needed this.
+		for Idx: number, Motor in next, Creator.TransparencyMotors do
+			if Idx % 135 == 0 then
+				task.wait()
+			end
+
+			Motor:setGoal(Flipper.Instant.new(Creator.GetThemeProperty("ElementTransparency")))
 		end
-
-		Motor:setGoal(Flipper.Instant.new(Creator.GetThemeProperty("ElementTransparency")))
 	end
 
 	Creator.Theme.Updating = false
