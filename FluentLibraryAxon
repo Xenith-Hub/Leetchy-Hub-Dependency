@@ -1377,8 +1377,16 @@ local function AttachDividerMethods(Section)
 end
 
 function TabModule:GetCurrentTabPos()
+	-- Guard the startup window where SelectedTab is still 0 (no tab selected yet) or
+	-- a tab's Frame isn't built — otherwise this indexed nil and errored each frame
+	-- until the first SelectTab landed.
+	local Tab = TabModule.Tabs[TabModule.SelectedTab]
+	if not (Tab and Tab.Frame) then
+		return 0
+	end
+
 	local TabHolderPos = TabModule.Window.TabHolder.AbsolutePosition.Y
-	local TabPos = TabModule.Tabs[TabModule.SelectedTab].Frame.AbsolutePosition.Y
+	local TabPos = Tab.Frame.AbsolutePosition.Y
 
 	return TabPos - TabHolderPos
 end
@@ -59877,6 +59885,16 @@ return function()
 		}),
 	})
 
+	-- Faint (roughly 96.5% transparent) decorative line segments. Routing each of
+	-- the hundreds of segments through Creator.New + per-frame theme registration
+	-- was the bulk of CreateWindow's cost, so we resolve the accent colour ONCE and
+	-- build the segments as raw, statically-coloured Instances instead. (They are a
+	-- non-interactive backdrop, so they don't need live per-segment theme updates.)
+	local accent = Color3.fromRGB(96, 205, 255)
+	pcall(function()
+		accent = Creator.GetThemeProperty("Accent") or accent
+	end)
+
 	local pi2 = math.pi * 2
 
 	for i = 0, LINE_COUNT - 1 do
@@ -59903,19 +59921,16 @@ return function()
 			local dist = math.sqrt(dx * dx + dy * dy)
 			local angle = math.deg(math.atan2(dy, dx))
 
-			New("Frame", {
-				Size = UDim2.fromOffset(dist, SEG_H),
-				Position = UDim2.fromScale(t0, y0),
-				AnchorPoint = Vector2.new(0, 0.5),
-				Rotation = angle,
-				BackgroundTransparency = alpha,
-				BorderSizePixel = 0,
-				ZIndex = 1,
-				Parent = Container,
-				ThemeTag = {
-					BackgroundColor3 = "Accent",
-				},
-			})
+			local seg = Instance.new("Frame")
+			seg.Size = UDim2.fromOffset(dist, SEG_H)
+			seg.Position = UDim2.fromScale(t0, y0)
+			seg.AnchorPoint = Vector2.new(0, 0.5)
+			seg.Rotation = angle
+			seg.BackgroundColor3 = accent
+			seg.BackgroundTransparency = alpha
+			seg.BorderSizePixel = 0
+			seg.ZIndex = 1
+			seg.Parent = Container
 		end
 	end
 
