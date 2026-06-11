@@ -2671,7 +2671,10 @@ return function(Config)
 	end)
 
 	Creator.AddSignal(UserInputService.InputChanged, function(Input)
-		if Input == DragInput and Dragging then
+		-- Guard StartPos/MousePos: a drag can fire before they're initialised (or
+		-- after the window is torn down / a stale duplicate window), which indexed
+		-- nil with 'X' and flooded the console every mouse-move.
+		if Input == DragInput and Dragging and StartPos and MousePos then
 			local Delta = Input.Position - MousePos
 			Window.Position = UDim2.fromOffset(StartPos.X.Offset + Delta.X, StartPos.Y.Offset + Delta.Y)
 			PosMotor:setGoal({
