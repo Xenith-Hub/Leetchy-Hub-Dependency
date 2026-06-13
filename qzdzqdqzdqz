@@ -5931,6 +5931,33 @@ do
 	end
 end
 
+-- Harden FastSignal:Wait for executors (Xeno) that run a pcall'd call inside a sub-coroutine:
+-- when CreateWindow yields on a Signal:Wait() from that thread, resume ownership is split
+-- between the signal and the executor's pcall machinery, so the captured thread can die
+-- between the status check and the resume -> a raw coroutine.resume throws "cannot resume
+-- dead coroutine" (the console spam, e.g. with CreateWindow{Acrylic=true}). Re-implement Wait
+-- to only resume a still-suspended thread AND pcall the resume so a lost race can never throw.
+-- (Monkey-patched from Src; the wally FastSignal package reverts on every build.)
+do
+	local ok = pcall(function()
+		if type(Signal) == "table" and type(rawget(Signal, "Wait")) == "function" and type(rawget(Signal, "Connect")) == "function" then
+			rawset(Signal, "Wait", function(self)
+				local thread = coroutine.running()
+				local connection
+				connection = self:Connect(function(...)
+					if connection == nil then return end
+					connection:Disconnect()
+					connection = nil
+					if coroutine.status(thread) == "suspended" then
+						pcall(task.spawn, thread, ...)
+					end
+				end)
+				return coroutine.yield()
+			end)
+		end
+	end)
+end
+
 -- ──────────────────────────────────────────────────────────────────────────────
 -- BAC (and similar anti-cheats) blacklist the original Fluent-Renewed rbxassetid
 -- textures (window buttons, acrylic noise, scrollbars, colorpicker). The moment
@@ -69783,80 +69810,73 @@ local ObjectTree = {
         },
         {
             {
+                13,
                 2,
-                1,
                 {
-                    "Components"
+                    "Elements"
                 },
                 {
                     {
-                        9,
+                        19,
                         2,
                         {
-                            "Tab"
+                            "Keybind"
                         }
                     },
                     {
-                        7,
+                        18,
                         2,
                         {
-                            "Notification"
+                            "Input"
                         }
                     },
                     {
-                        11,
+                        15,
                         2,
                         {
-                            "TitleBar"
+                            "Colorpicker"
                         }
                     },
                     {
-                        12,
+                        20,
                         2,
                         {
-                            "Window"
+                            "Paragraph"
                         }
                     },
                     {
-                        5,
+                        16,
                         2,
                         {
-                            "Dialog"
+                            "Divider"
                         }
                     },
                     {
-                        4,
+                        22,
+                        2,
+                        {
+                            "Toggle"
+                        }
+                    },
+                    {
+                        17,
+                        2,
+                        {
+                            "Dropdown"
+                        }
+                    },
+                    {
+                        21,
+                        2,
+                        {
+                            "Slider"
+                        }
+                    },
+                    {
+                        14,
                         2,
                         {
                             "Button"
-                        }
-                    },
-                    {
-                        8,
-                        2,
-                        {
-                            "Section"
-                        }
-                    },
-                    {
-                        10,
-                        2,
-                        {
-                            "Textbox"
-                        }
-                    },
-                    {
-                        6,
-                        2,
-                        {
-                            "Element"
-                        }
-                    },
-                    {
-                        3,
-                        2,
-                        {
-                            "Assets"
                         }
                     }
                 }
@@ -69869,10 +69889,31 @@ local ObjectTree = {
                 },
                 {
                     {
+                        30,
+                        2,
+                        {
+                            "WaveBackground"
+                        }
+                    },
+                    {
                         27,
                         2,
                         {
                             "Creator"
+                        }
+                    },
+                    {
+                        29,
+                        2,
+                        {
+                            "SaveManager"
+                        }
+                    },
+                    {
+                        28,
+                        2,
+                        {
+                            "Icons"
                         }
                     },
                     {
@@ -69897,99 +69938,6 @@ local ObjectTree = {
                                 }
                             }
                         }
-                    },
-                    {
-                        28,
-                        2,
-                        {
-                            "Icons"
-                        }
-                    },
-                    {
-                        30,
-                        2,
-                        {
-                            "WaveBackground"
-                        }
-                    },
-                    {
-                        29,
-                        2,
-                        {
-                            "SaveManager"
-                        }
-                    }
-                }
-            },
-            {
-                13,
-                2,
-                {
-                    "Elements"
-                },
-                {
-                    {
-                        18,
-                        2,
-                        {
-                            "Input"
-                        }
-                    },
-                    {
-                        17,
-                        2,
-                        {
-                            "Dropdown"
-                        }
-                    },
-                    {
-                        19,
-                        2,
-                        {
-                            "Keybind"
-                        }
-                    },
-                    {
-                        14,
-                        2,
-                        {
-                            "Button"
-                        }
-                    },
-                    {
-                        22,
-                        2,
-                        {
-                            "Toggle"
-                        }
-                    },
-                    {
-                        21,
-                        2,
-                        {
-                            "Slider"
-                        }
-                    },
-                    {
-                        20,
-                        2,
-                        {
-                            "Paragraph"
-                        }
-                    },
-                    {
-                        15,
-                        2,
-                        {
-                            "Colorpicker"
-                        }
-                    },
-                    {
-                        16,
-                        2,
-                        {
-                            "Divider"
-                        }
                     }
                 }
             },
@@ -70001,65 +69949,26 @@ local ObjectTree = {
                 },
                 {
                     {
+                        94,
+                        2,
+                        {
+                            "Signal"
+                        }
+                    },
+                    {
+                        93,
+                        2,
+                        {
+                            "Ripple"
+                        }
+                    },
+                    {
                         95,
                         1,
                         {
                             "_Index"
                         },
                         {
-                            {
-                                121,
-                                1,
-                                {
-                                    "lucasmzreal_fastsignal@10.4.0"
-                                },
-                                {
-                                    {
-                                        122,
-                                        2,
-                                        {
-                                            "fastsignal"
-                                        },
-                                        {
-                                            {
-                                                123,
-                                                2,
-                                                {
-                                                    "Deferred"
-                                                }
-                                            },
-                                            {
-                                                127,
-                                                2,
-                                                {
-                                                    "wally"
-                                                }
-                                            },
-                                            {
-                                                125,
-                                                2,
-                                                {
-                                                    "Immediate"
-                                                }
-                                            },
-                                            {
-                                                124,
-                                                2,
-                                                {
-                                                    "Docs"
-                                                }
-                                            },
-                                            {
-                                                126,
-                                                2,
-                                                {
-                                                    "Readme"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
                             {
                                 96,
                                 1,
@@ -70086,168 +69995,6 @@ local ObjectTree = {
                                 }
                             },
                             {
-                                99,
-                                1,
-                                {
-                                    "littensy_ripple@0.9.3"
-                                },
-                                {
-                                    {
-                                        100,
-                                        2,
-                                        {
-                                            "Promise"
-                                        }
-                                    },
-                                    {
-                                        101,
-                                        2,
-                                        {
-                                            "ripple"
-                                        },
-                                        {
-                                            {
-                                                114,
-                                                2,
-                                                {
-                                                    "types"
-                                                }
-                                            },
-                                            {
-                                                115,
-                                                1,
-                                                {
-                                                    "utils"
-                                                },
-                                                {
-                                                    {
-                                                        120,
-                                                        2,
-                                                        {
-                                                            "spy"
-                                                        }
-                                                    },
-                                                    {
-                                                        116,
-                                                        2,
-                                                        {
-                                                            "assign"
-                                                        }
-                                                    },
-                                                    {
-                                                        118,
-                                                        2,
-                                                        {
-                                                            "merge"
-                                                        }
-                                                    },
-                                                    {
-                                                        119,
-                                                        2,
-                                                        {
-                                                            "snapshot"
-                                                        }
-                                                    },
-                                                    {
-                                                        117,
-                                                        2,
-                                                        {
-                                                            "intermediate"
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                105,
-                                                1,
-                                                {
-                                                    "solvers"
-                                                },
-                                                {
-                                                    {
-                                                        110,
-                                                        2,
-                                                        {
-                                                            "spring"
-                                                        }
-                                                    },
-                                                    {
-                                                        113,
-                                                        2,
-                                                        {
-                                                            "tween.spec"
-                                                        }
-                                                    },
-                                                    {
-                                                        107,
-                                                        2,
-                                                        {
-                                                            "immediate.spec"
-                                                        }
-                                                    },
-                                                    {
-                                                        106,
-                                                        2,
-                                                        {
-                                                            "immediate"
-                                                        }
-                                                    },
-                                                    {
-                                                        109,
-                                                        2,
-                                                        {
-                                                            "linear.spec"
-                                                        }
-                                                    },
-                                                    {
-                                                        111,
-                                                        2,
-                                                        {
-                                                            "spring.spec"
-                                                        }
-                                                    },
-                                                    {
-                                                        112,
-                                                        2,
-                                                        {
-                                                            "tween"
-                                                        }
-                                                    },
-                                                    {
-                                                        108,
-                                                        2,
-                                                        {
-                                                            "linear"
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            {
-                                                104,
-                                                2,
-                                                {
-                                                    "createMotion.spec"
-                                                }
-                                            },
-                                            {
-                                                102,
-                                                2,
-                                                {
-                                                    "config"
-                                                }
-                                            },
-                                            {
-                                                103,
-                                                2,
-                                                {
-                                                    "createMotion"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            {
                                 128,
                                 1,
                                 {
@@ -70262,52 +70009,10 @@ local ObjectTree = {
                                         },
                                         {
                                             {
-                                                143,
+                                                136,
                                                 2,
                                                 {
-                                                    "Spring.spec"
-                                                }
-                                            },
-                                            {
-                                                144,
-                                                2,
-                                                {
-                                                    "isMotor"
-                                                }
-                                            },
-                                            {
-                                                131,
-                                                2,
-                                                {
-                                                    "BaseMotor.spec"
-                                                }
-                                            },
-                                            {
-                                                145,
-                                                2,
-                                                {
-                                                    "isMotor.spec"
-                                                }
-                                            },
-                                            {
-                                                142,
-                                                2,
-                                                {
-                                                    "Spring"
-                                                }
-                                            },
-                                            {
-                                                135,
-                                                2,
-                                                {
-                                                    "Instant.spec"
-                                                }
-                                            },
-                                            {
-                                                141,
-                                                2,
-                                                {
-                                                    "SingleMotor.spec"
+                                                    "Linear"
                                                 }
                                             },
                                             {
@@ -70318,17 +70023,10 @@ local ObjectTree = {
                                                 }
                                             },
                                             {
-                                                130,
+                                                145,
                                                 2,
                                                 {
-                                                    "BaseMotor"
-                                                }
-                                            },
-                                            {
-                                                137,
-                                                2,
-                                                {
-                                                    "Linear.spec"
+                                                    "isMotor.spec"
                                                 }
                                             },
                                             {
@@ -70336,6 +70034,20 @@ local ObjectTree = {
                                                 2,
                                                 {
                                                     "Signal.spec"
+                                                }
+                                            },
+                                            {
+                                                144,
+                                                2,
+                                                {
+                                                    "isMotor"
+                                                }
+                                            },
+                                            {
+                                                143,
+                                                2,
+                                                {
+                                                    "Spring.spec"
                                                 }
                                             },
                                             {
@@ -70353,6 +70065,13 @@ local ObjectTree = {
                                                 }
                                             },
                                             {
+                                                131,
+                                                2,
+                                                {
+                                                    "BaseMotor.spec"
+                                                }
+                                            },
+                                            {
                                                 138,
                                                 2,
                                                 {
@@ -70360,10 +70079,31 @@ local ObjectTree = {
                                                 }
                                             },
                                             {
-                                                136,
+                                                141,
                                                 2,
                                                 {
-                                                    "Linear"
+                                                    "SingleMotor.spec"
+                                                }
+                                            },
+                                            {
+                                                142,
+                                                2,
+                                                {
+                                                    "Spring"
+                                                }
+                                            },
+                                            {
+                                                130,
+                                                2,
+                                                {
+                                                    "BaseMotor"
+                                                }
+                                            },
+                                            {
+                                                135,
+                                                2,
+                                                {
+                                                    "Instant.spec"
                                                 }
                                             },
                                             {
@@ -70372,25 +70112,233 @@ local ObjectTree = {
                                                 {
                                                     "Instant"
                                                 }
+                                            },
+                                            {
+                                                137,
+                                                2,
+                                                {
+                                                    "Linear.spec"
+                                                }
                                             }
                                         }
                                     }
                                 }
+                            },
+                            {
+                                121,
+                                1,
+                                {
+                                    "lucasmzreal_fastsignal@10.4.0"
+                                },
+                                {
+                                    {
+                                        122,
+                                        2,
+                                        {
+                                            "fastsignal"
+                                        },
+                                        {
+                                            {
+                                                123,
+                                                2,
+                                                {
+                                                    "Deferred"
+                                                }
+                                            },
+                                            {
+                                                125,
+                                                2,
+                                                {
+                                                    "Immediate"
+                                                }
+                                            },
+                                            {
+                                                126,
+                                                2,
+                                                {
+                                                    "Readme"
+                                                }
+                                            },
+                                            {
+                                                124,
+                                                2,
+                                                {
+                                                    "Docs"
+                                                }
+                                            },
+                                            {
+                                                127,
+                                                2,
+                                                {
+                                                    "wally"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            {
+                                99,
+                                1,
+                                {
+                                    "littensy_ripple@0.9.3"
+                                },
+                                {
+                                    {
+                                        101,
+                                        2,
+                                        {
+                                            "ripple"
+                                        },
+                                        {
+                                            {
+                                                103,
+                                                2,
+                                                {
+                                                    "createMotion"
+                                                }
+                                            },
+                                            {
+                                                102,
+                                                2,
+                                                {
+                                                    "config"
+                                                }
+                                            },
+                                            {
+                                                115,
+                                                1,
+                                                {
+                                                    "utils"
+                                                },
+                                                {
+                                                    {
+                                                        119,
+                                                        2,
+                                                        {
+                                                            "snapshot"
+                                                        }
+                                                    },
+                                                    {
+                                                        116,
+                                                        2,
+                                                        {
+                                                            "assign"
+                                                        }
+                                                    },
+                                                    {
+                                                        118,
+                                                        2,
+                                                        {
+                                                            "merge"
+                                                        }
+                                                    },
+                                                    {
+                                                        117,
+                                                        2,
+                                                        {
+                                                            "intermediate"
+                                                        }
+                                                    },
+                                                    {
+                                                        120,
+                                                        2,
+                                                        {
+                                                            "spy"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                105,
+                                                1,
+                                                {
+                                                    "solvers"
+                                                },
+                                                {
+                                                    {
+                                                        108,
+                                                        2,
+                                                        {
+                                                            "linear"
+                                                        }
+                                                    },
+                                                    {
+                                                        109,
+                                                        2,
+                                                        {
+                                                            "linear.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        107,
+                                                        2,
+                                                        {
+                                                            "immediate.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        106,
+                                                        2,
+                                                        {
+                                                            "immediate"
+                                                        }
+                                                    },
+                                                    {
+                                                        113,
+                                                        2,
+                                                        {
+                                                            "tween.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        111,
+                                                        2,
+                                                        {
+                                                            "spring.spec"
+                                                        }
+                                                    },
+                                                    {
+                                                        112,
+                                                        2,
+                                                        {
+                                                            "tween"
+                                                        }
+                                                    },
+                                                    {
+                                                        110,
+                                                        2,
+                                                        {
+                                                            "spring"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                104,
+                                                2,
+                                                {
+                                                    "createMotion.spec"
+                                                }
+                                            },
+                                            {
+                                                114,
+                                                2,
+                                                {
+                                                    "types"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    {
+                                        100,
+                                        2,
+                                        {
+                                            "Promise"
+                                        }
+                                    }
+                                }
                             }
-                        }
-                    },
-                    {
-                        94,
-                        2,
-                        {
-                            "Signal"
-                        }
-                    },
-                    {
-                        93,
-                        2,
-                        {
-                            "Ripple"
                         }
                     },
                     {
@@ -70403,75 +70351,91 @@ local ObjectTree = {
                 }
             },
             {
+                2,
+                1,
+                {
+                    "Components"
+                },
+                {
+                    {
+                        4,
+                        2,
+                        {
+                            "Button"
+                        }
+                    },
+                    {
+                        9,
+                        2,
+                        {
+                            "Tab"
+                        }
+                    },
+                    {
+                        11,
+                        2,
+                        {
+                            "TitleBar"
+                        }
+                    },
+                    {
+                        3,
+                        2,
+                        {
+                            "Assets"
+                        }
+                    },
+                    {
+                        10,
+                        2,
+                        {
+                            "Textbox"
+                        }
+                    },
+                    {
+                        12,
+                        2,
+                        {
+                            "Window"
+                        }
+                    },
+                    {
+                        5,
+                        2,
+                        {
+                            "Dialog"
+                        }
+                    },
+                    {
+                        8,
+                        2,
+                        {
+                            "Section"
+                        }
+                    },
+                    {
+                        7,
+                        2,
+                        {
+                            "Notification"
+                        }
+                    },
+                    {
+                        6,
+                        2,
+                        {
+                            "Element"
+                        }
+                    }
+                }
+            },
+            {
                 31,
                 2,
                 {
                     "Themes"
                 },
                 {
-                    {
-                        55,
-                        2,
-                        {
-                            "GitHub Light High Contrast"
-                        }
-                    },
-                    {
-                        56,
-                        2,
-                        {
-                            "GitHub Light"
-                        }
-                    },
-                    {
-                        74,
-                        2,
-                        {
-                            "VSC Dark High Contrast"
-                        }
-                    },
-                    {
-                        52,
-                        2,
-                        {
-                            "GitHub Dark"
-                        }
-                    },
-                    {
-                        49,
-                        2,
-                        {
-                            "GitHub Dark Default"
-                        }
-                    },
-                    {
-                        87,
-                        2,
-                        {
-                            "Viow Neon"
-                        }
-                    },
-                    {
-                        71,
-                        2,
-                        {
-                            "United Ubuntu"
-                        }
-                    },
-                    {
-                        36,
-                        2,
-                        {
-                            "Amethyst"
-                        }
-                    },
-                    {
-                        32,
-                        2,
-                        {
-                            "Abyss"
-                        }
-                    },
                     {
                         48,
                         2,
@@ -70480,59 +70444,10 @@ local ObjectTree = {
                         }
                     },
                     {
-                        63,
+                        37,
                         2,
                         {
-                            "Monokai"
-                        }
-                    },
-                    {
-                        35,
-                        2,
-                        {
-                            "Amethyst Dark"
-                        }
-                    },
-                    {
-                        90,
-                        2,
-                        {
-                            "Yaru"
-                        }
-                    },
-                    {
-                        39,
-                        2,
-                        {
-                            "Dark Typewriter"
-                        }
-                    },
-                    {
-                        72,
-                        2,
-                        {
-                            "VS Dark"
-                        }
-                    },
-                    {
-                        40,
-                        2,
-                        {
-                            "Dark"
-                        }
-                    },
-                    {
-                        86,
-                        2,
-                        {
-                            "Viow Mars"
-                        }
-                    },
-                    {
-                        85,
-                        2,
-                        {
-                            "Viow Light"
+                            "Aqua"
                         }
                     },
                     {
@@ -70543,73 +70458,17 @@ local ObjectTree = {
                         }
                     },
                     {
-                        34,
+                        32,
                         2,
                         {
-                            "Ambiance"
+                            "Abyss"
                         }
                     },
                     {
-                        73,
+                        50,
                         2,
                         {
-                            "VS Light"
-                        }
-                    },
-                    {
-                        84,
-                        2,
-                        {
-                            "Viow Flat"
-                        }
-                    },
-                    {
-                        45,
-                        2,
-                        {
-                            "DuoTone Dark Sky"
-                        }
-                    },
-                    {
-                        82,
-                        2,
-                        {
-                            "Viow Arabian"
-                        }
-                    },
-                    {
-                        80,
-                        2,
-                        {
-                            "VSC Red"
-                        }
-                    },
-                    {
-                        81,
-                        2,
-                        {
-                            "Viow Arabian Mix"
-                        }
-                    },
-                    {
-                        42,
-                        2,
-                        {
-                            "DuoTone Dark Earth"
-                        }
-                    },
-                    {
-                        54,
-                        2,
-                        {
-                            "GitHub Light Default"
-                        }
-                    },
-                    {
-                        79,
-                        2,
-                        {
-                            "VSC Light+"
+                            "GitHub Dark Dimmed"
                         }
                     },
                     {
@@ -70620,10 +70479,178 @@ local ObjectTree = {
                         }
                     },
                     {
-                        64,
+                        58,
                         2,
                         {
-                            "Quiet Light"
+                            "Kimbie Dark"
+                        }
+                    },
+                    {
+                        63,
+                        2,
+                        {
+                            "Monokai"
+                        }
+                    },
+                    {
+                        53,
+                        2,
+                        {
+                            "GitHub Light Colorblind"
+                        }
+                    },
+                    {
+                        49,
+                        2,
+                        {
+                            "GitHub Dark Default"
+                        }
+                    },
+                    {
+                        74,
+                        2,
+                        {
+                            "VSC Dark High Contrast"
+                        }
+                    },
+                    {
+                        89,
+                        2,
+                        {
+                            "Yaru Dark"
+                        }
+                    },
+                    {
+                        47,
+                        2,
+                        {
+                            "Elementary"
+                        }
+                    },
+                    {
+                        83,
+                        2,
+                        {
+                            "Viow Darker"
+                        }
+                    },
+                    {
+                        88,
+                        2,
+                        {
+                            "Vynixu"
+                        }
+                    },
+                    {
+                        36,
+                        2,
+                        {
+                            "Amethyst"
+                        }
+                    },
+                    {
+                        35,
+                        2,
+                        {
+                            "Amethyst Dark"
+                        }
+                    },
+                    {
+                        69,
+                        2,
+                        {
+                            "Typewriter"
+                        }
+                    },
+                    {
+                        86,
+                        2,
+                        {
+                            "Viow Mars"
+                        }
+                    },
+                    {
+                        68,
+                        2,
+                        {
+                            "Tomorrow Night Blue"
+                        }
+                    },
+                    {
+                        43,
+                        2,
+                        {
+                            "DuoTone Dark Forest"
+                        }
+                    },
+                    {
+                        54,
+                        2,
+                        {
+                            "GitHub Light Default"
+                        }
+                    },
+                    {
+                        76,
+                        2,
+                        {
+                            "VSC Dark+"
+                        }
+                    },
+                    {
+                        40,
+                        2,
+                        {
+                            "Dark"
+                        }
+                    },
+                    {
+                        85,
+                        2,
+                        {
+                            "Viow Light"
+                        }
+                    },
+                    {
+                        70,
+                        2,
+                        {
+                            "United GNOME"
+                        }
+                    },
+                    {
+                        38,
+                        2,
+                        {
+                            "Arc Dark"
+                        }
+                    },
+                    {
+                        67,
+                        2,
+                        {
+                            "Solarized Light"
+                        }
+                    },
+                    {
+                        46,
+                        2,
+                        {
+                            "DuoTone Dark Space"
+                        }
+                    },
+                    {
+                        81,
+                        2,
+                        {
+                            "Viow Arabian Mix"
+                        }
+                    },
+                    {
+                        82,
+                        2,
+                        {
+                            "Viow Arabian"
                         }
                     },
                     {
@@ -70641,97 +70668,6 @@ local ObjectTree = {
                         }
                     },
                     {
-                        33,
-                        2,
-                        {
-                            "Adapta Nokto"
-                        }
-                    },
-                    {
-                        76,
-                        2,
-                        {
-                            "VSC Dark+"
-                        }
-                    },
-                    {
-                        53,
-                        2,
-                        {
-                            "GitHub Light Colorblind"
-                        }
-                    },
-                    {
-                        50,
-                        2,
-                        {
-                            "GitHub Dark Dimmed"
-                        }
-                    },
-                    {
-                        47,
-                        2,
-                        {
-                            "Elementary"
-                        }
-                    },
-                    {
-                        75,
-                        2,
-                        {
-                            "VSC Dark Modern"
-                        }
-                    },
-                    {
-                        89,
-                        2,
-                        {
-                            "Yaru Dark"
-                        }
-                    },
-                    {
-                        70,
-                        2,
-                        {
-                            "United GNOME"
-                        }
-                    },
-                    {
-                        60,
-                        2,
-                        {
-                            "Monokai Classic"
-                        }
-                    },
-                    {
-                        58,
-                        2,
-                        {
-                            "Kimbie Dark"
-                        }
-                    },
-                    {
-                        57,
-                        2,
-                        {
-                            "Glass"
-                        }
-                    },
-                    {
-                        67,
-                        2,
-                        {
-                            "Solarized Light"
-                        }
-                    },
-                    {
-                        65,
-                        2,
-                        {
-                            "Rose"
-                        }
-                    },
-                    {
                         41,
                         2,
                         {
@@ -70746,38 +70682,24 @@ local ObjectTree = {
                         }
                     },
                     {
-                        46,
+                        80,
                         2,
                         {
-                            "DuoTone Dark Space"
+                            "VSC Red"
                         }
                     },
                     {
-                        61,
+                        79,
                         2,
                         {
-                            "Monokai Dimmed"
+                            "VSC Light+"
                         }
                     },
                     {
-                        69,
+                        75,
                         2,
                         {
-                            "Typewriter"
-                        }
-                    },
-                    {
-                        38,
-                        2,
-                        {
-                            "Arc Dark"
-                        }
-                    },
-                    {
-                        59,
-                        2,
-                        {
-                            "Light"
+                            "VSC Dark Modern"
                         }
                     },
                     {
@@ -70788,38 +70710,143 @@ local ObjectTree = {
                         }
                     },
                     {
-                        68,
+                        73,
                         2,
                         {
-                            "Tomorrow Night Blue"
+                            "VS Light"
                         }
                     },
                     {
-                        83,
+                        52,
                         2,
                         {
-                            "Viow Darker"
+                            "GitHub Dark"
                         }
                     },
                     {
-                        43,
+                        72,
                         2,
                         {
-                            "DuoTone Dark Forest"
+                            "VS Dark"
                         }
                     },
                     {
-                        37,
+                        57,
                         2,
                         {
-                            "Aqua"
+                            "Glass"
                         }
                     },
                     {
-                        88,
+                        42,
                         2,
                         {
-                            "Vynixu"
+                            "DuoTone Dark Earth"
+                        }
+                    },
+                    {
+                        64,
+                        2,
+                        {
+                            "Quiet Light"
+                        }
+                    },
+                    {
+                        61,
+                        2,
+                        {
+                            "Monokai Dimmed"
+                        }
+                    },
+                    {
+                        71,
+                        2,
+                        {
+                            "United Ubuntu"
+                        }
+                    },
+                    {
+                        87,
+                        2,
+                        {
+                            "Viow Neon"
+                        }
+                    },
+                    {
+                        84,
+                        2,
+                        {
+                            "Viow Flat"
+                        }
+                    },
+                    {
+                        65,
+                        2,
+                        {
+                            "Rose"
+                        }
+                    },
+                    {
+                        55,
+                        2,
+                        {
+                            "GitHub Light High Contrast"
+                        }
+                    },
+                    {
+                        90,
+                        2,
+                        {
+                            "Yaru"
+                        }
+                    },
+                    {
+                        56,
+                        2,
+                        {
+                            "GitHub Light"
+                        }
+                    },
+                    {
+                        33,
+                        2,
+                        {
+                            "Adapta Nokto"
+                        }
+                    },
+                    {
+                        60,
+                        2,
+                        {
+                            "Monokai Classic"
+                        }
+                    },
+                    {
+                        45,
+                        2,
+                        {
+                            "DuoTone Dark Sky"
+                        }
+                    },
+                    {
+                        59,
+                        2,
+                        {
+                            "Light"
+                        }
+                    },
+                    {
+                        34,
+                        2,
+                        {
+                            "Ambiance"
+                        }
+                    },
+                    {
+                        39,
+                        2,
+                        {
+                            "Dark Typewriter"
                         }
                     }
                 }
@@ -70855,116 +70882,116 @@ local LineOffsets = {
     [25] = 5764,
     [26] = 5877,
     [27] = 5894,
-    [28] = 6253,
-    [29] = 59487,
-    [30] = 59941,
-    [31] = 60026,
-    [32] = 60103,
-    [33] = 60150,
-    [34] = 60197,
-    [35] = 60244,
-    [36] = 60291,
-    [37] = 60339,
-    [38] = 60387,
-    [39] = 60434,
-    [40] = 60481,
-    [41] = 60532,
-    [42] = 60563,
-    [43] = 60610,
-    [44] = 60657,
-    [45] = 60704,
-    [46] = 60751,
-    [47] = 60798,
-    [48] = 60845,
-    [49] = 60892,
-    [50] = 60939,
-    [51] = 60986,
-    [52] = 61035,
-    [53] = 61082,
-    [54] = 61129,
-    [55] = 61177,
-    [56] = 61224,
-    [57] = 61271,
-    [58] = 61322,
-    [59] = 61369,
-    [60] = 61417,
-    [61] = 61464,
-    [62] = 61511,
-    [63] = 61558,
-    [64] = 61605,
-    [65] = 61652,
-    [66] = 61700,
-    [67] = 61747,
-    [68] = 61794,
-    [69] = 61841,
-    [70] = 61888,
-    [71] = 61935,
-    [72] = 61982,
-    [73] = 62029,
-    [74] = 62076,
-    [75] = 62123,
-    [76] = 62170,
-    [77] = 62217,
-    [78] = 62264,
-    [79] = 62311,
-    [80] = 62358,
-    [81] = 62405,
-    [82] = 62452,
-    [83] = 62499,
-    [84] = 62546,
-    [85] = 62593,
-    [86] = 62640,
-    [87] = 62687,
-    [88] = 62734,
-    [89] = 62784,
-    [90] = 62831,
-    [92] = 62878,
-    [93] = 62881,
-    [94] = 62884,
-    [97] = 62887,
-    [98] = 64957,
-    [100] = 66803,
-    [101] = 66806,
-    [102] = 66830,
-    [103] = 66859,
-    [104] = 67169,
-    [106] = 67497,
-    [107] = 67518,
-    [108] = 67614,
-    [109] = 67653,
-    [110] = 67729,
-    [111] = 67805,
-    [112] = 67899,
-    [113] = 67982,
-    [114] = 68047,
-    [116] = 68126,
-    [117] = 68143,
-    [118] = 68248,
-    [119] = 68261,
-    [120] = 68310,
-    [122] = 68336,
-    [123] = 68390,
-    [124] = 68580,
-    [125] = 68815,
-    [126] = 68894,
-    [127] = 68924,
-    [129] = 68936,
-    [130] = 68949,
-    [131] = 69006,
-    [132] = 69047,
-    [133] = 69156,
-    [134] = 69241,
-    [135] = 69259,
-    [136] = 69270,
-    [137] = 69307,
-    [138] = 69365,
-    [139] = 69424,
-    [140] = 69474,
-    [141] = 69543,
-    [142] = 69590,
-    [143] = 69699,
-    [144] = 69735,
-    [145] = 69747
+    [28] = 6280,
+    [29] = 59514,
+    [30] = 59968,
+    [31] = 60053,
+    [32] = 60130,
+    [33] = 60177,
+    [34] = 60224,
+    [35] = 60271,
+    [36] = 60318,
+    [37] = 60366,
+    [38] = 60414,
+    [39] = 60461,
+    [40] = 60508,
+    [41] = 60559,
+    [42] = 60590,
+    [43] = 60637,
+    [44] = 60684,
+    [45] = 60731,
+    [46] = 60778,
+    [47] = 60825,
+    [48] = 60872,
+    [49] = 60919,
+    [50] = 60966,
+    [51] = 61013,
+    [52] = 61062,
+    [53] = 61109,
+    [54] = 61156,
+    [55] = 61204,
+    [56] = 61251,
+    [57] = 61298,
+    [58] = 61349,
+    [59] = 61396,
+    [60] = 61444,
+    [61] = 61491,
+    [62] = 61538,
+    [63] = 61585,
+    [64] = 61632,
+    [65] = 61679,
+    [66] = 61727,
+    [67] = 61774,
+    [68] = 61821,
+    [69] = 61868,
+    [70] = 61915,
+    [71] = 61962,
+    [72] = 62009,
+    [73] = 62056,
+    [74] = 62103,
+    [75] = 62150,
+    [76] = 62197,
+    [77] = 62244,
+    [78] = 62291,
+    [79] = 62338,
+    [80] = 62385,
+    [81] = 62432,
+    [82] = 62479,
+    [83] = 62526,
+    [84] = 62573,
+    [85] = 62620,
+    [86] = 62667,
+    [87] = 62714,
+    [88] = 62761,
+    [89] = 62811,
+    [90] = 62858,
+    [92] = 62905,
+    [93] = 62908,
+    [94] = 62911,
+    [97] = 62914,
+    [98] = 64984,
+    [100] = 66830,
+    [101] = 66833,
+    [102] = 66857,
+    [103] = 66886,
+    [104] = 67196,
+    [106] = 67524,
+    [107] = 67545,
+    [108] = 67641,
+    [109] = 67680,
+    [110] = 67756,
+    [111] = 67832,
+    [112] = 67926,
+    [113] = 68009,
+    [114] = 68074,
+    [116] = 68153,
+    [117] = 68170,
+    [118] = 68275,
+    [119] = 68288,
+    [120] = 68337,
+    [122] = 68363,
+    [123] = 68417,
+    [124] = 68607,
+    [125] = 68842,
+    [126] = 68921,
+    [127] = 68951,
+    [129] = 68963,
+    [130] = 68976,
+    [131] = 69033,
+    [132] = 69074,
+    [133] = 69183,
+    [134] = 69268,
+    [135] = 69286,
+    [136] = 69297,
+    [137] = 69334,
+    [138] = 69392,
+    [139] = 69451,
+    [140] = 69501,
+    [141] = 69570,
+    [142] = 69617,
+    [143] = 69726,
+    [144] = 69762,
+    [145] = 69774
 }
 
 -- Misc AOT variable imports
